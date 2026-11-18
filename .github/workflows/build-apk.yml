@@ -24,9 +24,15 @@ jobs:
           gradle-version: 8.9
 
       - name: Build debug APK
-        run: gradle :app:assembleDebug --no-daemon
+        run: |
+          echo "Arquivos no repositório:"
+          find . -maxdepth 3 -not -path './.git*' | head -50
+          F=$(find . -name settings.gradle.kts -not -path './.git/*' | head -1)
+          if [ -z "$F" ]; then echo "settings.gradle.kts NAO ENCONTRADO"; exit 1; fi
+          cd "$(dirname "$F")"
+          gradle :app:assembleDebug --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:
           name: CalculadoraEntregas-debug
-          path: app/build/outputs/apk/debug/*.apk
+          path: "**/build/outputs/apk/debug/*.apk"
