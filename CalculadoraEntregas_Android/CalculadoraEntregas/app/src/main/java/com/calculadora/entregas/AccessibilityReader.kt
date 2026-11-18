@@ -8,7 +8,7 @@ import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.util.concurrent.atomic.AtomicBoolean
-
+import android.content.Intent
 class AccessibilityReader : AccessibilityService() {
     private var lastText = ""
     private var lastOfferKey = ""
