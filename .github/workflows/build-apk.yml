@@ -23,9 +23,10 @@ jobs:
           gradle-version: 8.9
 
       - name: Build debug APK
+        working-directory: CalculadoraEntregas
         run: gradle :app:assembleDebug --no-daemon
 
       - uses: actions/upload-artifact@v4
         with:
           name: CalculadoraEntregas-debug
-          path: app/build/outputs/apk/debug/*.apk
+          path: CalculadoraEntregas/app/build/outputs/apk/debug/*.apk
