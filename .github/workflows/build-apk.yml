@@ -25,14 +25,19 @@ jobs:
 
       - name: Build debug APK
         run: |
-          echo "Arquivos no repositório:"
-          find . -maxdepth 3 -not -path './.git*' | head -50
-          F=$(find . -name settings.gradle.kts -not -path './.git/*' | head -1)
-          if [ -z "$F" ]; then echo "settings.gradle.kts NAO ENCONTRADO"; exit 1; fi
-          cd "$(dirname "$F")"
+          F=$(grep -rl "Calculadora de Entregas v7" --include=MainActivity.kt . | head -1)
+          if [ -z "$F" ]; then
+            echo "VERSAO V7 NAO ENCONTRADA NO REPOSITORIO. MainActivity encontrados:"
+            find . -name MainActivity.kt -not -path './.git/*'
+            exit 1
+          fi
+          D="${F%/app/src/main/java/com/calculadora/entregas/MainActivity.kt}"
+          echo "Projeto v7 em: $D"
+          cd "$D"
           gradle :app:assembleDebug --no-daemon
+          echo "APK_DIR=$D" >> $GITHUB_ENV
 
       - uses: actions/upload-artifact@v4
         with:
-          name: CalculadoraEntregas-debug
-          path: "**/build/outputs/apk/debug/*.apk"
+          name: CalculadoraEntregas-v7-run${{ github.run_number }}
+          path: ${{ env.APK_DIR }}/app/build/outputs/apk/debug/*.apk
