@@ -24,6 +24,10 @@ class AccessibilityReader : AccessibilityService() {
     private var lastOfferKey = ""
     private var lastOcrTime = 0L
     private val screenshotInProgress = AtomicBoolean(false)
+    private var lastPackage: String? = null
+    private val trailingCapture = Runnable {
+        if (AppConfig.isEnabled(this)) captureForOcr()
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -78,6 +82,19 @@ class AccessibilityReader : AccessibilityService() {
         if (root.packageName?.toString() == packageName) {
             // A janela ativa é o próprio app: não lê nem sobrescreve o diagnóstico.
             root.recycle()
+            return
+        }
+        val pkg = root.packageName?.toString()
+        if (pkg != null) {
+            lastPackage = pkg
+            TemplateStore.recordPackage(pkg)
+        }
+        if (TemplateStore.forPackage(this, pkg) != null) {
+            // App treinado: lê por foto, nas áreas marcadas no treino.
+            root.recycle()
+            handler.removeCallbacks(trailingCapture)
+            captureForOcr()
+            handler.postDelayed(trailingCapture, 700)
             return
         }
         val items = ArrayList<OfferParser.TextItem>()
@@ -144,12 +161,14 @@ class AccessibilityReader : AccessibilityService() {
                             screenshotInProgress.set(false)
                             return
                         }
-                        OcrReader.read(bitmap) { items ->
+                        OcrReader.readFull(bitmap) { res ->
                             try {
-                                if (items == null) {
+                                if (res == null) {
                                     if (manual) toast("Falha ao ler o print")
                                 } else {
-                                    val rides = OfferParser.findRides(items)
+                                    val items = res.lines
+                                    val trained = readByTemplate(res, bitmap.width, bitmap.height, manual)
+                                    val rides = if (trained != null) listOf(trained) else OfferParser.findRides(items)
                                     if (manual) DebugLog.recordManual(items, rides.size) else DebugLog.recordOcr(items, rides.size)
                                     if (rides.isNotEmpty()) {
                                         if (manual) lastOfferKey = ""
@@ -187,6 +206,21 @@ class AccessibilityReader : AccessibilityService() {
         )
     }
 
+    // Modelo treinado: do app que está na tela; no print manual, se não houver, tenta todos os modelos.
+    private fun readByTemplate(res: OcrResult, w: Int, h: Int, manual: Boolean): OfferParser.ParsedOffer? {
+        val own = TemplateStore.forPackage(this, lastPackage)
+        if (own != null) {
+            TemplateReader.read(own, res.words, w, h).offer?.let { return it }
+        }
+        if (manual) {
+            for (t in TemplateStore.all(this)) {
+                if (t.name == own?.name) continue
+                TemplateReader.read(t, res.words, w, h).offer?.let { return it }
+            }
+        }
+        return null
+    }
+
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
@@ -212,6 +246,7 @@ class AccessibilityReader : AccessibilityService() {
 
     override fun onDestroy() {
         ui?.destroy()
+        handler.removeCallbacks(trailingCapture)
         ui = null
         instance = null
         super.onDestroy()

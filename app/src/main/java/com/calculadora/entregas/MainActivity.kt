@@ -114,6 +114,11 @@ class MainActivity : Activity() {
         }
         add(test)
 
+        val train = Button(this)
+        train.text = "Treinar (marcar onde fica cada item)"
+        train.setOnClickListener { startActivity(Intent(this, TrainActivity::class.java)) }
+        add(train)
+
         val diag = Button(this)
         diag.text = "Diagnóstico (o que o app leu)"
         diag.setOnClickListener {
