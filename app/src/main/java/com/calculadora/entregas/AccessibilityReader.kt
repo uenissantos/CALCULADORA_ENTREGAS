@@ -75,6 +75,11 @@ class AccessibilityReader : AccessibilityService() {
             DebugLog.noRoot++
             return
         }
+        if (root.packageName?.toString() == packageName) {
+            // A janela ativa é o próprio app: não lê nem sobrescreve o diagnóstico.
+            root.recycle()
+            return
+        }
         val items = ArrayList<OfferParser.TextItem>()
         collectItems(root, items, Rect())
         root.recycle()
@@ -145,7 +150,7 @@ class AccessibilityReader : AccessibilityService() {
                                     if (manual) toast("Falha ao ler o print")
                                 } else {
                                     val rides = OfferParser.findRides(items)
-                                    DebugLog.recordOcr(items, rides.size)
+                                    if (manual) DebugLog.recordManual(items, rides.size) else DebugLog.recordOcr(items, rides.size)
                                     if (rides.isNotEmpty()) {
                                         if (manual) lastOfferKey = ""
                                         handleRides(rides, readingLineY(bitmap.height))
