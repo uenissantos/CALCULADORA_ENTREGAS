@@ -5,9 +5,12 @@ import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.widget.Toast
 import java.util.concurrent.atomic.AtomicBoolean
 
 class AccessibilityReader : AccessibilityService() {
@@ -16,6 +19,7 @@ class AccessibilityReader : AccessibilityService() {
     }
 
     private var ui: OverlayUi? = null
+    private val handler = Handler(Looper.getMainLooper())
     private var lastSignature = ""
     private var lastOfferKey = ""
     private var lastOcrTime = 0L
@@ -24,13 +28,13 @@ class AccessibilityReader : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        val overlay = OverlayUi(this) { toggle() }
+        val overlay = OverlayUi(this, { togglePower() }, { manualPrint() })
         ui = overlay
         overlay.showButton(AppConfig.isEnabled(this))
         OcrReader.warmUp()
     }
 
-    private fun toggle() {
+    private fun togglePower() {
         val now = !AppConfig.isEnabled(this)
         AppConfig.setEnabled(this, now)
         ui?.updateButton(now)
@@ -40,6 +44,15 @@ class AccessibilityReader : AccessibilityService() {
             lastOfferKey = ""
             lastSignature = ""
         }
+    }
+
+    private fun manualPrint() {
+        if (Build.VERSION.SDK_INT < 30) {
+            Toast.makeText(this, "Print automático exige Android 11 ou mais novo", Toast.LENGTH_LONG).show()
+            return
+        }
+        ui?.setHiddenForCapture(true)
+        handler.postDelayed({ captureForOcr(true) }, 180)
     }
 
     fun previewCard() {
@@ -100,11 +113,14 @@ class AccessibilityReader : AccessibilityService() {
         }
     }
 
-    private fun captureForOcr() {
+    private fun captureForOcr(manual: Boolean = false) {
         if (Build.VERSION.SDK_INT < 30) return
         val now = System.currentTimeMillis()
-        if (now - lastOcrTime < 600) return
-        if (!screenshotInProgress.compareAndSet(false, true)) return
+        if (!manual && now - lastOcrTime < 600) return
+        if (!screenshotInProgress.compareAndSet(false, true)) {
+            if (manual) ui?.setHiddenForCapture(false)
+            return
+        }
         lastOcrTime = now
 
         takeScreenshot(
@@ -112,6 +128,7 @@ class AccessibilityReader : AccessibilityService() {
             mainExecutor,
             object : TakeScreenshotCallback {
                 override fun onSuccess(result: ScreenshotResult) {
+                    if (manual) ui?.setHiddenForCapture(false)
                     val hardware = result.hardwareBuffer
                     try {
                         val wrapped = Bitmap.wrapHardwareBuffer(hardware, result.colorSpace)
@@ -124,11 +141,16 @@ class AccessibilityReader : AccessibilityService() {
                         }
                         OcrReader.read(bitmap) { items ->
                             try {
-                                if (items != null) {
+                                if (items == null) {
+                                    if (manual) toast("Falha ao ler o print")
+                                } else {
                                     val rides = OfferParser.findRides(items)
                                     DebugLog.recordOcr(items, rides.size)
                                     if (rides.isNotEmpty()) {
+                                        if (manual) lastOfferKey = ""
                                         handleRides(rides, readingLineY(bitmap.height))
+                                    } else if (manual) {
+                                        toast("Nenhuma corrida encontrada no print")
                                     } else {
                                         // A oferta saiu da tela: some o card e libera a mesma oferta para o futuro.
                                         lastOfferKey = ""
@@ -150,10 +172,18 @@ class AccessibilityReader : AccessibilityService() {
 
                 override fun onFailure(errorCode: Int) {
                     DebugLog.screenshotStatus = "falhou, código $errorCode (6 = app bloqueia captura de tela)"
+                    if (manual) {
+                        ui?.setHiddenForCapture(false)
+                        toast("Não consegui tirar o print (código $errorCode)")
+                    }
                     screenshotInProgress.set(false)
                 }
             }
         )
+    }
+
+    private fun toast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
     private fun handleRides(rides: List<OfferParser.ParsedOffer>, readingY: Int) {

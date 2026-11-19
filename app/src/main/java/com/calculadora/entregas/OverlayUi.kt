@@ -18,13 +18,17 @@ import kotlin.math.abs
 
 class OverlayUi(
     private val service: AccessibilityService,
-    private val onToggle: () -> Unit
+    private val onPower: () -> Unit,
+    private val onPrint: () -> Unit
 ) {
     private val wm = service.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val handler = Handler(Looper.getMainLooper())
     private var card: View? = null
     private var button: TextView? = null
     private var line: View? = null
+    private var buttonParams: WindowManager.LayoutParams? = null
+    private val menuViews = ArrayList<View>()
+    private val closeMenuRunnable = Runnable { closeMenu() }
     private var lineParams: WindowManager.LayoutParams? = null
     private val hideRunnable = Runnable { hideCard() }
 
@@ -222,7 +226,10 @@ class OverlayUi(
                     MotionEvent.ACTION_MOVE -> {
                         val dx = e.rawX - downX
                         val dy = e.rawY - downY
-                        if (abs(dx) > dp(6) || abs(dy) > dp(6)) moved = true
+                        if (abs(dx) > dp(6) || abs(dy) > dp(6)) {
+                            if (!moved) closeMenu()
+                            moved = true
+                        }
                         if (moved) {
                             params.x = startX + dx.toInt()
                             params.y = startY + dy.toInt()
@@ -231,7 +238,7 @@ class OverlayUi(
                         true
                     }
                     MotionEvent.ACTION_UP -> {
-                        if (!moved) onToggle()
+                        if (!moved) toggleMenu()
                         true
                     }
                     else -> false
@@ -240,10 +247,92 @@ class OverlayUi(
             try {
                 wm.addView(b, params)
                 button = b
+                buttonParams = params
             } catch (_: Exception) {
             }
         }
         updateButton(active)
+    }
+
+    private fun pill(content: String, color: Int, action: () -> Unit): TextView {
+        val v = TextView(service)
+        v.text = content
+        v.textSize = 13f
+        v.gravity = Gravity.CENTER
+        v.setTextColor(white)
+        v.setTypeface(v.typeface, Typeface.BOLD)
+        val bg = GradientDrawable()
+        bg.cornerRadius = dp(22).toFloat()
+        bg.setColor(color)
+        bg.setStroke(dp(2), white)
+        v.background = bg
+        v.setOnClickListener {
+            closeMenu()
+            action()
+        }
+        return v
+    }
+
+    private fun toggleMenu() {
+        if (menuViews.isEmpty()) openMenu() else closeMenu()
+    }
+
+    private fun openMenu() {
+        val bp = buttonParams ?: return
+        val w = dp(92)
+        val h = dp(44)
+        val gap = dp(8)
+        val size = dp(52)
+        val screenW = service.resources.displayMetrics.widthPixels
+        val rightHalf = bp.x + size / 2 > screenW / 2
+        val x1 = if (rightHalf) bp.x - gap - w else bp.x + size + gap
+        val x2 = if (rightHalf) x1 - gap - w else x1 + w + gap
+        val y = bp.y + (size - h) / 2
+
+        val active = AppConfig.isEnabled(service)
+        val items = listOf(
+            Pair(pill("PRINT", Color.rgb(25, 118, 210)) { onPrint() }, x1),
+            Pair(
+                pill(if (active) "DESLIGAR" else "LIGAR", if (active) Color.rgb(190, 30, 50) else Color.rgb(0, 150, 80)) { onPower() },
+                x2
+            )
+        )
+        for (entry in items) {
+            val params = WindowManager.LayoutParams(
+                w,
+                h,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                PixelFormat.TRANSLUCENT
+            )
+            params.gravity = Gravity.TOP or Gravity.START
+            params.x = entry.second
+            params.y = y
+            try {
+                wm.addView(entry.first, params)
+                menuViews.add(entry.first)
+            } catch (_: Exception) {
+            }
+        }
+        handler.removeCallbacks(closeMenuRunnable)
+        handler.postDelayed(closeMenuRunnable, 6000L)
+    }
+
+    fun closeMenu() {
+        handler.removeCallbacks(closeMenuRunnable)
+        for (v in menuViews) {
+            try { wm.removeView(v) } catch (_: Exception) {}
+        }
+        menuViews.clear()
+    }
+
+    // Esconde tudo por um instante para o print sair limpo (sem o card por cima).
+    fun setHiddenForCapture(hidden: Boolean) {
+        val mode = if (hidden) View.INVISIBLE else View.VISIBLE
+        card?.visibility = mode
+        line?.visibility = mode
+        button?.visibility = mode
+        for (v in menuViews) v.visibility = mode
     }
 
     fun updateButton(active: Boolean) {
@@ -257,6 +346,7 @@ class OverlayUi(
     }
 
     fun destroy() {
+        closeMenu()
         hideCard()
         hideLine()
         button?.let {

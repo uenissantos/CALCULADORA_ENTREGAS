@@ -59,7 +59,7 @@ class MainActivity : Activity() {
         add(titleView)
 
         val help = TextView(this)
-        help.text = "1) Ative a acessibilidade.\n2) Ajuste os valores e salve.\n3) Use o botão flutuante ON/OFF para pausar ou iniciar a leitura."
+        help.text = "1) Ative a acessibilidade.\n2) Ajuste os valores e salve.\n3) Toque no botão flutuante ON/OFF: abre PRINT (lê a tela na hora e mostra o card) e DESLIGAR/LIGAR."
         help.textSize = 14f
         add(help)
 
