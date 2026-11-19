@@ -339,7 +339,7 @@ class OverlayUi(
         val b = button ?: return
         val bg = GradientDrawable()
         bg.shape = GradientDrawable.OVAL
-        bg.setColor(if (active) Color.rgb(0, 150, 80) else Color.rgb(190, 30, 50))
+        bg.setColor(if (active) BuildInfo.COLOR else Color.rgb(190, 30, 50))
         bg.setStroke(dp(2), white)
         b.background = bg
         b.text = if (active) "ON" else "OFF"
