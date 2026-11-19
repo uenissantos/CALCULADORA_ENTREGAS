@@ -8,19 +8,48 @@ import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.util.concurrent.atomic.AtomicBoolean
-import android.content.Intent
+
 class AccessibilityReader : AccessibilityService() {
+    companion object {
+        var instance: AccessibilityReader? = null
+    }
+
+    private var ui: OverlayUi? = null
     private var lastText = ""
     private var lastOfferKey = ""
+    private var lastOcrTime = 0L
     private val screenshotInProgress = AtomicBoolean(false)
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        showStatus("Leitura ativada")
+        instance = this
+        val overlay = OverlayUi(this) { toggle() }
+        ui = overlay
+        overlay.showButton(AppConfig.isEnabled(this))
+    }
+
+    private fun toggle() {
+        val now = !AppConfig.isEnabled(this)
+        AppConfig.setEnabled(this, now)
+        ui?.updateButton(now)
+        if (!now) {
+            ui?.hideCard()
+            lastOfferKey = ""
+            lastText = ""
+        }
+    }
+
+    fun previewCard() {
+        val cfg = AppConfig.load(this)
+        val result = OfferCalculator.calculate(7.30, 3.3, 11.0, cfg) ?: return
+        ui?.showCard(result, cfg.cardSeconds)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        if (event.packageName?.toString() == packageName) return
+        if (!AppConfig.isEnabled(this)) return
+
         val root = rootInActiveWindow
         val text = StringBuilder()
         collectText(root, text)
@@ -31,9 +60,9 @@ class AccessibilityReader : AccessibilityService() {
 
         if (screenText != lastText) {
             lastText = screenText
-            val result = OfferParser.calculate(screenText)
-            if (result != null) {
-                publishOffer(result)
+            val offer = OfferParser.parse(screenText)
+            if (offer != null) {
+                publishOffer(offer)
             } else {
                 captureForOcr()
             }
@@ -52,7 +81,11 @@ class AccessibilityReader : AccessibilityService() {
     }
 
     private fun captureForOcr() {
-        if (Build.VERSION.SDK_INT < 30 || !screenshotInProgress.compareAndSet(false, true)) return
+        if (Build.VERSION.SDK_INT < 30) return
+        val now = System.currentTimeMillis()
+        if (now - lastOcrTime < 1200) return
+        if (!screenshotInProgress.compareAndSet(false, true)) return
+        lastOcrTime = now
 
         takeScreenshot(
             Display.DEFAULT_DISPLAY,
@@ -70,9 +103,13 @@ class AccessibilityReader : AccessibilityService() {
                         }
                         OcrReader.read(bitmap) { recognized ->
                             try {
-                                if (!recognized.isNullOrBlank()) {
-                                    val offer = OfferParser.calculate(recognized)
-                                    if (offer != null) publishOffer(offer)
+                                val offer = if (recognized.isNullOrBlank()) null else OfferParser.parse(recognized)
+                                if (offer != null) {
+                                    publishOffer(offer)
+                                } else {
+                                    // A oferta saiu da tela: some o card e libera a mesma oferta para o futuro.
+                                    lastOfferKey = ""
+                                    ui?.hideCard()
                                 }
                             } finally {
                                 bitmap.recycle()
@@ -93,33 +130,21 @@ class AccessibilityReader : AccessibilityService() {
         )
     }
 
-    private fun publishOffer(result: OfferCalculator.Result) {
-        val key = "${result.amount}|${result.pickupKm}|${result.deliveryKm}"
+    private fun publishOffer(offer: OfferParser.ParsedOffer) {
+        val key = "${offer.amount}|${offer.km}|${offer.minutes}"
         if (key == lastOfferKey) return
+        val cfg = AppConfig.load(this)
+        val result = OfferCalculator.calculate(offer.amount, offer.km, offer.minutes, cfg) ?: return
         lastOfferKey = key
-
-        val intent = Intent(this, FloatingService::class.java).apply {
-            action = FloatingService.ACTION_UPDATE
-            putExtra(FloatingService.EXTRA_AMOUNT, result.amount)
-            putExtra(FloatingService.EXTRA_DISTANCE, result.totalKm)
-            putExtra(FloatingService.EXTRA_PRICE, result.pricePerKm)
-            putExtra(FloatingService.EXTRA_APPROVED, result.approved)
-        }
-        try {
-            startService(intent)
-        } catch (_: Exception) {
-            // O Android pode impedir o início do serviço em determinadas condições.
-        }
-    }
-
-    private fun showStatus(message: String) {
-        if (!android.provider.Settings.canDrawOverlays(this)) return
-        val intent = Intent(this, FloatingService::class.java).apply {
-            action = FloatingService.ACTION_STATUS
-            putExtra(FloatingService.EXTRA_STATUS, message)
-        }
-        try { startService(intent) } catch (_: Exception) {}
+        ui?.showCard(result, cfg.cardSeconds)
     }
 
     override fun onInterrupt() = Unit
+
+    override fun onDestroy() {
+        ui?.destroy()
+        ui = null
+        instance = null
+        super.onDestroy()
+    }
 }

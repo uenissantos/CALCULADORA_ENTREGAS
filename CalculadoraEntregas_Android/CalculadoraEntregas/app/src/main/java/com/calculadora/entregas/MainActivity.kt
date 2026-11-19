@@ -2,85 +2,118 @@ package com.calculadora.entregas
 
 import android.app.Activity
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.text.InputType
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 
 class MainActivity : Activity() {
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun fmt(v: Double): String = v.toString().removeSuffix(".0").replace('.', ',')
+
+    private fun num(field: EditText): Double? =
+        field.text.toString().trim().replace(',', '.').toDoubleOrNull()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val cfg = AppConfig.load(this)
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(28, 40, 28, 28)
-        }
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.setPadding(dp(20), dp(24), dp(20), dp(24))
 
-        val title = TextView(this).apply {
-            text = "Calculadora de Entregas"
-            textSize = 25f
-            gravity = Gravity.CENTER
-        }
-        val description = TextView(this).apply {
-            text = "Valor mínimo inicial: R$ 2,00 por km\\n\\nAtive as permissões abaixo. O leitor usa acessibilidade e, quando necessário, captura de tela autorizada pelo Android para OCR."
-            textSize = 16f
-            gravity = Gravity.CENTER
-            setPadding(0, 24, 0, 24)
-        }
-
-        val accessibility = Button(this).apply {
-            text = "Ativar acessibilidade"
-            setOnClickListener {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            }
-        }
-
-        val overlay = Button(this).apply {
-            text = "Permitir sobreposição"
-            setOnClickListener {
-                if (!Settings.canDrawOverlays(this@MainActivity)) {
-                    val intent = Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:$packageName")
-                    )
-                    startActivity(intent)
-                }
-            }
-        }
-
-        val test = Button(this).apply {
-            text = "Testar cálculo da oferta de exemplo"
-            setOnClickListener {
-                val result = OfferCalculator.calculate(7.30, 2.1, 1.2)
-                description.text = result?.let {
-                    "${OfferCalculator.money(it.pricePerKm)}/km\\n" +
-                        "Total: ${OfferCalculator.decimal(it.totalKm)} km\\n" +
-                        if (it.approved) "Acima do mínimo" else "Abaixo do mínimo"
-                } ?: "Não foi possível calcular"
-            }
-        }
-
-        val note = TextView(this).apply {
-            text = "O card só será exibido quando a permissão de sobreposição estiver ativa e uma oferta válida for reconhecida."
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setPadding(0, 22, 0, 0)
-        }
-
-        listOf(title, description, accessibility, overlay, test, note).forEach { view ->
+        fun add(view: android.view.View) {
             root.addView(
                 view,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { bottomMargin = 14 }
+                ).apply { bottomMargin = dp(8) }
             )
         }
-        setContentView(root)
+
+        fun campo(title: String, value: String): EditText {
+            val label = TextView(this)
+            label.text = title
+            label.textSize = 14f
+            add(label)
+            val input = EditText(this)
+            input.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            input.setText(value)
+            add(input)
+            return input
+        }
+
+        val titleView = TextView(this)
+        titleView.text = "Calculadora de Entregas"
+        titleView.textSize = 24f
+        titleView.gravity = Gravity.CENTER
+        add(titleView)
+
+        val help = TextView(this)
+        help.text = "1) Ative a acessibilidade.\n2) Ajuste os valores e salve.\n3) Use o botão flutuante ON/OFF para pausar ou iniciar a leitura."
+        help.textSize = 14f
+        add(help)
+
+        val accessibility = Button(this)
+        accessibility.text = "Ativar acessibilidade"
+        accessibility.setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        add(accessibility)
+
+        val fHour = campo("Quero por hora, no mínimo (R$)", fmt(cfg.minPerHour))
+        val fMinute = campo("Quero por minuto, no mínimo (R$)", fmt(cfg.minPerMinute))
+        val fKmGood = campo("KM bom: a partir de (R$/km)", fmt(cfg.kmGood))
+        val fKmBad = campo("KM ruim: abaixo de (R$/km)", fmt(cfg.kmBad))
+        val fFuel = campo("Preço do litro do combustível (R$)", fmt(cfg.fuelPrice))
+        val fKmL = campo("Km que o veículo faz por litro", fmt(cfg.kmPerLiter))
+        val fSeconds = campo("Segundos que o card fica na tela", cfg.cardSeconds.toString())
+
+        val save = Button(this)
+        save.text = "Salvar configurações"
+        save.setOnClickListener {
+            val hour = num(fHour)
+            val minute = num(fMinute)
+            val kmGood = num(fKmGood)
+            val kmBad = num(fKmBad)
+            val fuel = num(fFuel)
+            val kmL = num(fKmL)
+            val seconds = num(fSeconds)
+            if (hour == null || minute == null || kmGood == null || kmBad == null ||
+                fuel == null || kmL == null || seconds == null || kmL <= 0.0
+            ) {
+                Toast.makeText(this, "Preencha todos os campos com números válidos", Toast.LENGTH_LONG).show()
+            } else {
+                AppConfig.save(
+                    this,
+                    AppConfig(hour, minute, kmGood, kmBad, fuel, kmL, seconds.toInt().coerceIn(2, 30))
+                )
+                Toast.makeText(this, "Configurações salvas", Toast.LENGTH_SHORT).show()
+            }
+        }
+        add(save)
+
+        val test = Button(this)
+        test.text = "Testar card"
+        test.setOnClickListener {
+            val service = AccessibilityReader.instance
+            if (service == null) {
+                Toast.makeText(this, "Ative a acessibilidade primeiro", Toast.LENGTH_LONG).show()
+            } else {
+                service.previewCard()
+            }
+        }
+        add(test)
+
+        val scroll = ScrollView(this)
+        scroll.addView(root)
+        setContentView(scroll)
     }
 }
