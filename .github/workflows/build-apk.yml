@@ -23,21 +23,26 @@ jobs:
         with:
           gradle-version: 8.9
 
-      - name: Build debug APK
+      - name: Montar projeto com a v8 e compilar
         run: |
-          F=$(grep -rl "Calculadora de Entregas v7" --include=MainActivity.kt . | head -1)
-          if [ -z "$F" ]; then
-            echo "VERSAO V7 NAO ENCONTRADA NO REPOSITORIO. MainActivity encontrados:"
+          NEW=$(find . -name BuildInfo.kt -not -path './.git/*' | head -1)
+          if [ -z "$NEW" ]; then
+            echo "V8 NAO ENCONTRADA (sem BuildInfo.kt). Arquivos MainActivity:"
             find . -name MainActivity.kt -not -path './.git/*'
             exit 1
           fi
-          D="${F%/app/src/main/java/com/calculadora/entregas/MainActivity.kt}"
-          echo "Projeto v7 em: $D"
-          cd "$D"
+          APP="${NEW%/src/main/java/com/calculadora/entregas/BuildInfo.kt}"
+          CFG=$(find . -name settings.gradle.kts -not -path './.git/*' | head -1)
+          CFGDIR=$(dirname "$CFG")
+          echo "App v8 em: $APP | Configuração em: $CFGDIR"
+          mkdir -p /tmp/proj
+          cp "$CFGDIR/settings.gradle.kts" "$CFGDIR/build.gradle.kts" /tmp/proj/
+          cp "$CFGDIR/gradle.properties" /tmp/proj/ 2>/dev/null || true
+          cp -r "$APP" /tmp/proj/app
+          cd /tmp/proj
           gradle :app:assembleDebug --no-daemon
-          echo "APK_DIR=$D" >> $GITHUB_ENV
 
       - uses: actions/upload-artifact@v4
         with:
-          name: CalculadoraEntregas-v7-run${{ github.run_number }}
-          path: ${{ env.APK_DIR }}/app/build/outputs/apk/debug/*.apk
+          name: CalculadoraEntregas-v8-run${{ github.run_number }}
+          path: /tmp/proj/app/build/outputs/apk/debug/*.apk
