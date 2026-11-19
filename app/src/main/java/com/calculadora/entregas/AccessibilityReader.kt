@@ -56,17 +56,26 @@ class AccessibilityReader : AccessibilityService() {
         if (event.packageName?.toString() == packageName) return
         if (!AppConfig.isEnabled(this)) return
 
-        val root = rootInActiveWindow ?: return
+        DebugLog.events++
+        val root = rootInActiveWindow
+        if (root == null) {
+            DebugLog.noRoot++
+            return
+        }
         val items = ArrayList<OfferParser.TextItem>()
         collectItems(root, items, Rect())
         root.recycle()
-        if (items.isEmpty()) return
+        if (items.isEmpty()) {
+            DebugLog.noItems++
+            return
+        }
 
         val signature = items.joinToString("|") { "${it.text}@${it.top}" }
         if (signature == lastSignature) return
         lastSignature = signature
 
         val rides = OfferParser.findRides(items)
+        DebugLog.recordScreen(items, rides.size)
         if (rides.isNotEmpty()) {
             handleRides(rides, readingLineY(resources.displayMetrics.heightPixels))
         } else {
@@ -106,6 +115,7 @@ class AccessibilityReader : AccessibilityService() {
                     val hardware = result.hardwareBuffer
                     try {
                         val wrapped = Bitmap.wrapHardwareBuffer(hardware, result.colorSpace)
+                        DebugLog.screenshotStatus = "ok"
                         val bitmap = wrapped?.copy(Bitmap.Config.ARGB_8888, false)
                         wrapped?.recycle()
                         if (bitmap == null) {
@@ -116,6 +126,7 @@ class AccessibilityReader : AccessibilityService() {
                             try {
                                 if (items != null) {
                                     val rides = OfferParser.findRides(items)
+                                    DebugLog.recordOcr(items, rides.size)
                                     if (rides.isNotEmpty()) {
                                         handleRides(rides, readingLineY(bitmap.height))
                                     } else {
@@ -138,6 +149,7 @@ class AccessibilityReader : AccessibilityService() {
                 }
 
                 override fun onFailure(errorCode: Int) {
+                    DebugLog.screenshotStatus = "falhou, código $errorCode (6 = app bloqueia captura de tela)"
                     screenshotInProgress.set(false)
                 }
             }

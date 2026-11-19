@@ -34,6 +34,7 @@ class OverlayUi(
     private val white = Color.WHITE
     private val gray = Color.WHITE
     private val orange = Color.rgb(255, 145, 0)
+    private val dim = Color.rgb(160, 165, 175)
     private val cyan = Color.rgb(64, 196, 255)
 
     private fun dp(v: Int): Int = (v * service.resources.displayMetrics.density).toInt()
@@ -78,19 +79,27 @@ class OverlayUi(
         bg.setStroke(dp(3), Color.rgb(74, 123, 208))
         box.background = bg
 
-        val header = String.format(java.util.Locale("pt", "BR"), "%skm, %.0f min.", OfferCalculator.decimal(r.totalKm), r.minutes)
+        val header = if (r.minutes > 0.0) {
+            String.format(java.util.Locale("pt", "BR"), "%skm, %.0f min.", OfferCalculator.decimal(r.totalKm), r.minutes)
+        } else {
+            OfferCalculator.decimal(r.totalKm) + "km"
+        }
         box.addView(label(header, 18f, white, true))
 
         val kmColor = when (r.kmLevel) { 2 -> green; 1 -> yellow; else -> red }
         val kmStatus = when (r.kmLevel) { 2 -> "BOM"; 1 -> "REGULAR"; else -> "RUIM" }
-        val hourColor = if (r.hourGood) green else red
-        val minuteColor = if (r.minuteGood) green else red
+        val hourColor = when (r.hourGood) { true -> green; false -> red; null -> dim }
+        val minuteColor = when (r.minuteGood) { true -> green; false -> red; null -> dim }
+        val hourStatus = when (r.hourGood) { true -> "BOM"; false -> "RUIM"; null -> "SEM TEMPO" }
+        val minuteStatus = when (r.minuteGood) { true -> "BOM"; false -> "RUIM"; null -> "SEM TEMPO" }
+        val hourValue = r.perHour?.let { OfferCalculator.money(it) } ?: "—"
+        val minuteValue = r.perMinute?.let { OfferCalculator.money(it) } ?: "—"
 
         box.addView(
             row(
                 cell("KM", OfferCalculator.money(r.perKm), kmStatus, kmColor),
-                cell("Hora", OfferCalculator.money(r.perHour), if (r.hourGood) "BOM" else "RUIM", hourColor),
-                cell("Minuto", OfferCalculator.money(r.perMinute), if (r.minuteGood) "BOM" else "RUIM", minuteColor)
+                cell("Hora", hourValue, hourStatus, hourColor),
+                cell("Minuto", minuteValue, minuteStatus, minuteColor)
             )
         )
         box.addView(

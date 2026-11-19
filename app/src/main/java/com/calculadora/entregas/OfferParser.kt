@@ -14,7 +14,7 @@ object OfferParser {
     )
 
     private class Token(
-        val isPrice: Boolean,
+        val kind: Int, // 0 = valor, 1 = trecho (min + km), 2 = distância total
         val amount: Double,
         val minutes: Double,
         val km: Double,
@@ -25,6 +25,12 @@ object OfferParser {
     // Valor: ignora "R$1,58/km" e "R$0,98 Tarifa base".
     private val moneyRegex = Regex(
         """R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})(?!\d)(?!\s*/)(?!\s*Tarifa)""",
+        RegexOption.IGNORE_CASE
+    )
+
+    // Entrega sem tempo: "Distância total 10,1 km".
+    private val totalRegex = Regex(
+        """Dist[âa]ncia\s+total\s*(\d+(?:[,.]\d+)?)\s*km""",
         RegexOption.IGNORE_CASE
     )
 
@@ -42,12 +48,16 @@ object OfferParser {
             val local = ArrayList<Pair<Int, Token>>()
             for (m in moneyRegex.findAll(t)) {
                 val amount = m.groupValues[1].replace(".", "").replace(",", ".").toDoubleOrNull() ?: continue
-                local.add(m.range.first to Token(true, amount, 0.0, 0.0, item.top, item.bottom))
+                local.add(m.range.first to Token(0, amount, 0.0, 0.0, item.top, item.bottom))
             }
             for (m in legRegex.findAll(t)) {
                 val minutes = m.groupValues[1].toDoubleOrNull() ?: continue
                 val km = m.groupValues[2].replace(",", ".").toDoubleOrNull() ?: continue
-                local.add(m.range.first to Token(false, 0.0, minutes, km, item.top, item.bottom))
+                local.add(m.range.first to Token(1, 0.0, minutes, km, item.top, item.bottom))
+            }
+            for (m in totalRegex.findAll(t)) {
+                val km = m.groupValues[1].replace(",", ".").toDoubleOrNull() ?: continue
+                local.add(m.range.first to Token(2, 0.0, 0.0, km, item.top, item.bottom))
             }
             local.sortBy { it.first }
             for (pair in local) tokens.add(pair.second)
@@ -57,27 +67,46 @@ object OfferParser {
         var price: Token? = null
         var legs = ArrayList<Token>()
         for (tk in tokens) {
-            if (tk.isPrice) {
-                // Um valor novo com trecho solto = corrida anterior cortada; recomeça.
-                if (legs.size == 1) legs = ArrayList()
-                if (legs.isEmpty()) price = tk
-            } else {
-                legs.add(tk)
-                if (legs.size == 2) {
+            when (tk.kind) {
+                0 -> {
+                    // Um valor novo com trecho solto = corrida anterior cortada; recomeça.
+                    if (legs.size == 1) legs = ArrayList()
+                    if (legs.isEmpty()) price = tk
+                }
+                2 -> {
                     val p = price
-                    if (p != null) {
+                    if (p != null && legs.isEmpty()) {
                         rides.add(
                             ParsedOffer(
                                 amount = p.amount,
-                                km = legs[0].km + legs[1].km,
-                                minutes = legs[0].minutes + legs[1].minutes,
-                                top = minOf(p.top, legs[0].top),
-                                bottom = maxOf(p.bottom, legs[1].bottom)
+                                km = tk.km,
+                                minutes = 0.0,
+                                top = minOf(p.top, tk.top),
+                                bottom = maxOf(p.bottom, tk.bottom)
                             )
                         )
                     }
                     price = null
                     legs = ArrayList()
+                }
+                else -> {
+                    legs.add(tk)
+                    if (legs.size == 2) {
+                        val p = price
+                        if (p != null) {
+                            rides.add(
+                                ParsedOffer(
+                                    amount = p.amount,
+                                    km = legs[0].km + legs[1].km,
+                                    minutes = legs[0].minutes + legs[1].minutes,
+                                    top = minOf(p.top, legs[0].top),
+                                    bottom = maxOf(p.bottom, legs[1].bottom)
+                                )
+                            )
+                        }
+                        price = null
+                        legs = ArrayList()
+                    }
                 }
             }
         }

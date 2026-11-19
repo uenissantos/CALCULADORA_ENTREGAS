@@ -8,23 +8,24 @@ object OfferCalculator {
         val totalKm: Double,
         val minutes: Double,
         val perKm: Double,
-        val perHour: Double,
-        val perMinute: Double,
+        val perHour: Double?,
+        val perMinute: Double?,
         val cost: Double,
         val costPerKm: Double,
         val profit: Double,
         val kmLevel: Int, // 2 = bom, 1 = regular, 0 = ruim
-        val hourGood: Boolean,
-        val minuteGood: Boolean
+        val hourGood: Boolean?,
+        val minuteGood: Boolean?
     )
 
     fun calculate(amount: Double, km: Double, minutes: Double, cfg: AppConfig): Result? {
         if (!amount.isFinite() || !km.isFinite() || !minutes.isFinite()) return null
-        if (amount <= 0.0 || km <= 0.0 || minutes <= 0.0) return null
+        if (amount <= 0.0 || km <= 0.0 || minutes < 0.0) return null
 
         val perKm = amount / km
-        val perMinute = amount / minutes
-        val perHour = perMinute * 60.0
+        val hasTime = minutes > 0.0
+        val perMinute = if (hasTime) amount / minutes else null
+        val perHour = if (perMinute != null) perMinute * 60.0 else null
         val costPerKm = if (cfg.kmPerLiter > 0.0) cfg.fuelPrice / cfg.kmPerLiter else 0.0
         val cost = costPerKm * km
         val level = when {
@@ -43,8 +44,8 @@ object OfferCalculator {
             costPerKm = costPerKm,
             profit = amount - cost,
             kmLevel = level,
-            hourGood = perHour >= cfg.minPerHour,
-            minuteGood = perMinute >= cfg.minPerMinute
+            hourGood = perHour?.let { it >= cfg.minPerHour },
+            minuteGood = perMinute?.let { it >= cfg.minPerMinute }
         )
     }
 

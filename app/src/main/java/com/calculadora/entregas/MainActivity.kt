@@ -114,6 +114,24 @@ class MainActivity : Activity() {
         }
         add(test)
 
+        val diag = Button(this)
+        diag.text = "Diagnóstico (o que o app leu)"
+        diag.setOnClickListener {
+            val info = TextView(this)
+            info.text = DebugLog.report()
+            info.textSize = 11f
+            info.setTextIsSelectable(true)
+            info.setPadding(dp(12), dp(12), dp(12), dp(12))
+            val sv = ScrollView(this)
+            sv.addView(info)
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Diagnóstico")
+                .setView(sv)
+                .setPositiveButton("Fechar", null)
+                .show()
+        }
+        add(diag)
+
         val scroll = ScrollView(this)
         scroll.addView(root)
         setContentView(scroll)
