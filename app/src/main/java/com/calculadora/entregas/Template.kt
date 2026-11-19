@@ -30,21 +30,16 @@ data class OcrWord(
 )
 
 object TemplateStore {
-    private val recent = LinkedHashSet<String>()
-
     private fun prefs(c: Context) = c.getSharedPreferences("templates", Context.MODE_PRIVATE)
 
-    // Apps vistos pelo leitor, para sugerir o nome do modelo no treino.
-    fun recordPackage(pkg: String) {
-        if (pkg == "com.android.systemui") return
-        recent.remove(pkg)
-        recent.add(pkg)
-        while (recent.size > 8) recent.remove(recent.first())
+    fun hasAny(c: Context): Boolean = prefs(c).all.isNotEmpty()
+
+    // Nome automático para um modelo novo: "Modelo 1", "Modelo 2"...
+    fun nextName(c: Context): String {
+        var n = 1
+        while (prefs(c).contains("Modelo $n")) n++
+        return "Modelo $n"
     }
-
-    fun recentPackages(): List<String> = recent.toList().reversed()
-
-    fun lastPackage(): String? = recent.lastOrNull()
 
     fun save(c: Context, t: Template) {
         val o = JSONObject()
@@ -65,14 +60,13 @@ object TemplateStore {
 
     fun get(c: Context, name: String): Template? = parse(name, prefs(c).getString(name, null))
 
-    fun forPackage(c: Context, pkg: String?): Template? = if (pkg == null) null else get(c, pkg)
-
     fun all(c: Context): List<Template> {
         val out = ArrayList<Template>()
         for (entry in prefs(c).all) {
             val t = parse(entry.key, entry.value as? String)
             if (t != null) out.add(t)
         }
+        out.sortBy { it.name }
         return out
     }
 
@@ -142,7 +136,8 @@ object TemplateReader {
         val km = kmUnico ?: ((kmIda ?: 0.0) + (kmVolta ?: 0.0))
         val minutes = minUnico ?: ((minIda ?: 0.0) + (minVolta ?: 0.0))
 
-        val offer = if (valor == null || valor <= 0.0 || km <= 0.0) {
+        // Limites de bom senso para não aceitar leitura de tela que não é de corrida.
+        val offer = if (valor == null || valor <= 0.0 || valor > 5000.0 || km <= 0.0 || km > 400.0) {
             null
         } else {
             OfferParser.ParsedOffer(valor, km, minutes, 0, 0)

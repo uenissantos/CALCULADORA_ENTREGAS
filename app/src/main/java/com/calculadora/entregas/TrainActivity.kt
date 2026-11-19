@@ -12,27 +12,31 @@ import android.graphics.Paint
 import android.graphics.PointF
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
-import android.text.InputType
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
-import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import kotlin.math.abs
 
-// Tela "Treinar": o usuário escolhe um print da galeria (tela inteira com o card)
-// e marca onde fica cada item. O modelo vale para o app indicado no nome.
+// Tela "Treinar": imagem da galeria em tela cheia. Arraste sobre um item; aparece um
+// flutuante para dizer se é Valor, KM ou Tempo. Embaixo: apagar e confirmar (salvar).
 class TrainActivity : Activity() {
     private val pickCode = 1001
-    private val chips = HashMap<Field, Button>()
-    private var selected: Field = Field.VALOR
     private var bitmap: Bitmap? = null
+    private var loadedName: String? = null
+    private var popup: View? = null
+    private lateinit var root: FrameLayout
     private lateinit var trainView: TrainView
-    private lateinit var nameField: EditText
+    private lateinit var emptyBox: LinearLayout
+    private lateinit var hint: TextView
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
@@ -41,116 +45,90 @@ class TrainActivity : Activity() {
     }
 
     private fun fieldColor(f: Field): Int = when (f) {
-        Field.VALOR -> Color.rgb(0, 150, 80)
-        Field.KM_UNICO -> Color.rgb(230, 81, 0)
-        Field.KM_IDA -> Color.rgb(198, 40, 40)
-        Field.KM_VOLTA -> Color.rgb(156, 39, 176)
-        Field.MIN_UNICO -> Color.rgb(0, 131, 143)
-        Field.MIN_IDA -> Color.rgb(21, 101, 192)
-        Field.MIN_VOLTA -> Color.rgb(93, 64, 55)
+        Field.VALOR -> Color.rgb(0, 170, 90)
+        Field.KM_UNICO -> Color.rgb(255, 109, 0)
+        Field.KM_IDA -> Color.rgb(229, 57, 53)
+        Field.KM_VOLTA -> Color.rgb(171, 71, 188)
+        Field.MIN_UNICO -> Color.rgb(0, 172, 193)
+        Field.MIN_IDA -> Color.rgb(30, 136, 229)
+        Field.MIN_VOLTA -> Color.rgb(141, 110, 99)
     }
 
-    private fun button(label: String, onClick: () -> Unit): Button {
-        val b = Button(this)
-        b.text = label
-        b.isAllCaps = false
-        b.textSize = 13f
-        b.minHeight = 0
-        b.minimumHeight = dp(40)
-        b.setOnClickListener { onClick() }
-        return b
+    private fun rounded(color: Int, radiusDp: Int, stroke: Int): GradientDrawable {
+        val g = GradientDrawable()
+        g.setColor(color)
+        g.cornerRadius = dp(radiusDp).toFloat()
+        g.setStroke(dp(2), stroke)
+        return g
     }
 
-    private fun hrow(vararg views: View): LinearLayout {
-        val r = LinearLayout(this)
-        r.orientation = LinearLayout.HORIZONTAL
-        for (v in views) {
-            r.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        }
-        return r
+    private fun circle(symbol: String, color: Int, onClick: () -> Unit): TextView {
+        val v = TextView(this)
+        v.text = symbol
+        v.textSize = 24f
+        v.gravity = Gravity.CENTER
+        v.setTextColor(Color.WHITE)
+        val g = GradientDrawable()
+        g.shape = GradientDrawable.OVAL
+        g.setColor(color)
+        g.setStroke(dp(2), Color.WHITE)
+        v.background = g
+        v.setOnClickListener { onClick() }
+        return v
     }
 
-    private fun chip(f: Field): Button {
-        val b = button(f.label) {
-            selected = f
-            refreshChips()
-        }
-        b.setOnLongClickListener {
-            trainView.rects.remove(f)
-            trainView.invalidate()
-            refreshChips()
-            true
-        }
-        chips[f] = b
-        return b
-    }
-
-    private fun refreshChips() {
-        for ((f, b) in chips) {
-            val marked = trainView.rects.containsKey(f)
-            b.text = (if (marked) "✓ " else "") + f.label
-            if (f == selected) {
-                b.setBackgroundColor(fieldColor(f))
-                b.setTextColor(Color.WHITE)
-            } else {
-                b.setBackgroundColor(Color.rgb(235, 235, 235))
-                b.setTextColor(fieldColor(f))
-            }
-        }
+    private fun place(v: View, sizeDp: Int, gravity: Int, left: Int, top: Int, right: Int, bottom: Int) {
+        val lp = FrameLayout.LayoutParams(dp(sizeDp), dp(sizeDp), gravity)
+        lp.setMargins(dp(left), dp(top), dp(right), dp(bottom))
+        root.addView(v, lp)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val root = LinearLayout(this)
-        root.orientation = LinearLayout.VERTICAL
-        root.setPadding(dp(8), dp(32), dp(8), dp(24))
+        root = FrameLayout(this)
+        root.setBackgroundColor(Color.BLACK)
 
         trainView = TrainView(this)
+        root.addView(trainView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
-        nameField = EditText(this)
-        nameField.inputType = InputType.TYPE_CLASS_TEXT
-        nameField.hint = "Nome do app (pacote), ex.: com.app.exemplo"
-        nameField.textSize = 14f
-        nameField.setText(TemplateStore.lastPackage() ?: "")
-        root.addView(nameField, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        emptyBox = LinearLayout(this)
+        emptyBox.orientation = LinearLayout.VERTICAL
+        emptyBox.gravity = Gravity.CENTER_HORIZONTAL
+        val info = TextView(this)
+        info.text = "Escolha o print da tela inteira com o card de corrida"
+        info.textSize = 16f
+        info.setTextColor(Color.WHITE)
+        info.gravity = Gravity.CENTER
+        info.setPadding(dp(32), dp(8), dp(32), dp(16))
+        emptyBox.addView(info)
+        val pick = Button(this)
+        pick.text = "Escolher imagem da galeria"
+        pick.isAllCaps = false
+        pick.setOnClickListener { pickImage() }
+        emptyBox.addView(pick)
+        root.addView(emptyBox, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
 
-        root.addView(
-            hrow(
-                button("Apps recentes") { pickRecent() },
-                button("Modelos salvos") { pickSaved() }
-            )
-        )
-        root.addView(
-            hrow(
-                button("Escolher imagem da galeria") { pickImage() },
-                button("Testar leitura") { testReading() }
-            )
-        )
+        hint = TextView(this)
+        hint.text = "Arraste um retângulo sobre o valor, o KM ou o tempo"
+        hint.textSize = 13f
+        hint.setTextColor(Color.WHITE)
+        hint.setPadding(dp(12), dp(6), dp(12), dp(6))
+        hint.background = rounded(Color.argb(170, 0, 0, 0), 12, Color.TRANSPARENT)
+        hint.visibility = View.GONE
+        val hlp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
+        hlp.topMargin = dp(100)
+        root.addView(hint, hlp)
 
-        val help = TextView(this)
-        help.text = "Escolha o print da tela inteira com o card de corrida. Toque no campo abaixo e arraste um retângulo sobre ele na imagem. " +
-            "Toque longo no campo apaga a marcação. O que não marcar fica em branco. " +
-            "KM/Tempo: use \"único\" se o card já mostra o total; senão marque ida e volta."
-        help.textSize = 12f
-        help.setPadding(dp(4), dp(4), dp(4), dp(4))
-        root.addView(help)
+        // Em cima: trocar imagem e abrir modelos salvos.
+        place(circle("🖼", Color.argb(200, 30, 30, 30)) { pickImage() }, 48, Gravity.TOP or Gravity.START, 12, 36, 0, 0)
+        place(circle("📋", Color.argb(200, 30, 30, 30)) { pickSaved() }, 48, Gravity.TOP or Gravity.START, 68, 36, 0, 0)
 
-        root.addView(hrow(chip(Field.VALOR), chip(Field.KM_UNICO)))
-        root.addView(hrow(chip(Field.KM_IDA), chip(Field.KM_VOLTA)))
-        root.addView(hrow(chip(Field.MIN_UNICO), chip(Field.MIN_IDA), chip(Field.MIN_VOLTA)))
-
-        root.addView(trainView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-
-        root.addView(
-            hrow(
-                button("Salvar modelo") { saveTemplate() },
-                button("Apagar modelo") { deleteTemplate() }
-            )
-        )
+        // Embaixo, por cima da foto: apagar e confirmar.
+        place(circle("🗑", Color.rgb(198, 40, 40)) { askDelete() }, 60, Gravity.BOTTOM or Gravity.START, 24, 0, 0, 56)
+        place(circle("✓", Color.rgb(0, 150, 80)) { confirm() }, 60, Gravity.BOTTOM or Gravity.END, 0, 0, 24, 56)
 
         setContentView(root)
-        refreshChips()
     }
 
     @Suppress("DEPRECATION")
@@ -172,6 +150,9 @@ class TrainActivity : Activity() {
         } else {
             bitmap = b
             trainView.bmp = b
+            emptyBox.visibility = View.GONE
+            hint.visibility = if (trainView.rects.isEmpty()) View.VISIBLE else View.GONE
+            dismissPopup()
             trainView.invalidate()
         }
     }
@@ -191,17 +172,100 @@ class TrainActivity : Activity() {
         }
     }
 
-    private fun pickRecent() {
-        val list = TemplateStore.recentPackages()
-        if (list.isEmpty()) {
-            toast("Abra o app de corrida com a acessibilidade ativa e volte aqui: ele aparece nesta lista")
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Apps recentes")
-            .setItems(list.toTypedArray()) { _, which -> nameField.setText(list[which]) }
-            .show()
+    // ---------- Flutuante Valor / KM / Tempo ----------
+
+    private fun dismissPopup() {
+        popup?.let { root.removeView(it) }
+        popup = null
+        trainView.pending = null
+        trainView.invalidate()
     }
+
+    private fun showPopup(rect: RectF, existing: Field?) {
+        dismissPopup()
+        trainView.pending = RectF(rect)
+        trainView.invalidate()
+        showLevel(0, rect, existing)
+    }
+
+    private fun assign(rect: RectF, f: Field, existing: Field?) {
+        if (existing != null) trainView.rects.remove(existing)
+        trainView.rects[f] = RectF(rect)
+        hint.visibility = View.GONE
+        dismissPopup()
+    }
+
+    private fun showLevel(level: Int, rect: RectF, existing: Field?) {
+        popup?.let { root.removeView(it) }
+        popup = null
+
+        val bar = LinearLayout(this)
+        bar.orientation = LinearLayout.HORIZONTAL
+        bar.setPadding(dp(6), dp(6), dp(6), dp(6))
+        bar.background = rounded(Color.argb(235, 25, 25, 25), 16, Color.WHITE)
+
+        fun opt(label: String, color: Int, action: () -> Unit) {
+            val t = TextView(this)
+            t.text = label
+            t.textSize = 15f
+            t.gravity = Gravity.CENTER
+            t.setTextColor(Color.WHITE)
+            t.setTypeface(t.typeface, Typeface.BOLD)
+            t.setPadding(dp(14), 0, dp(14), 0)
+            t.background = rounded(color, 12, Color.TRANSPARENT)
+            t.setOnClickListener { action() }
+            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44))
+            lp.setMargins(dp(3), 0, dp(3), 0)
+            bar.addView(t, lp)
+        }
+
+        val gray = Color.rgb(90, 90, 90)
+        when (level) {
+            0 -> {
+                opt("Valor", fieldColor(Field.VALOR)) { assign(rect, Field.VALOR, existing) }
+                opt("KM", fieldColor(Field.KM_UNICO)) { showLevel(1, rect, existing) }
+                opt("Tempo", fieldColor(Field.MIN_UNICO)) { showLevel(2, rect, existing) }
+                if (existing != null) {
+                    opt("Apagar", Color.rgb(198, 40, 40)) {
+                        trainView.rects.remove(existing)
+                        dismissPopup()
+                    }
+                }
+                opt("✕", gray) { dismissPopup() }
+            }
+            1 -> {
+                opt("Único", fieldColor(Field.KM_UNICO)) { assign(rect, Field.KM_UNICO, existing) }
+                opt("Ida", fieldColor(Field.KM_IDA)) { assign(rect, Field.KM_IDA, existing) }
+                opt("Volta", fieldColor(Field.KM_VOLTA)) { assign(rect, Field.KM_VOLTA, existing) }
+                opt("←", gray) { showLevel(0, rect, existing) }
+            }
+            else -> {
+                opt("Único", fieldColor(Field.MIN_UNICO)) { assign(rect, Field.MIN_UNICO, existing) }
+                opt("Ida", fieldColor(Field.MIN_IDA)) { assign(rect, Field.MIN_IDA, existing) }
+                opt("Volta", fieldColor(Field.MIN_VOLTA)) { assign(rect, Field.MIN_VOLTA, existing) }
+                opt("←", gray) { showLevel(0, rect, existing) }
+            }
+        }
+
+        bar.measure(
+            View.MeasureSpec.makeMeasureSpec(root.width, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(root.height, View.MeasureSpec.AT_MOST)
+        )
+        val w = bar.measuredWidth
+        val h = bar.measuredHeight
+        val sr = trainView.toScreen(rect)
+        val x = (sr.centerX() - w / 2f).toInt().coerceIn(dp(8), maxOf(dp(8), root.width - w - dp(8)))
+        var y = (sr.bottom + dp(10)).toInt()
+        if (y + h > root.height - dp(120)) y = (sr.top - h - dp(10)).toInt()
+        y = y.coerceIn(dp(90), maxOf(dp(90), root.height - h - dp(120)))
+        val lp = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.leftMargin = x
+        lp.topMargin = y
+        root.addView(bar, lp)
+        popup = bar
+    }
+
+    // ---------- Modelos, apagar e confirmar ----------
 
     private fun pickSaved() {
         val list = TemplateStore.all(this)
@@ -213,22 +277,45 @@ class TrainActivity : Activity() {
             .setTitle("Modelos salvos")
             .setItems(list.map { it.name }.toTypedArray()) { _, which ->
                 val t = list[which]
-                nameField.setText(t.name)
+                dismissPopup()
+                loadedName = t.name
                 trainView.rects.clear()
                 for ((f, r) in t.fields) trainView.rects[f] = RectF(r)
+                hint.visibility = View.GONE
                 trainView.invalidate()
-                refreshChips()
+                if (bitmap == null) toast("Modelo carregado. Escolha a imagem (ícone no canto) para conferir.")
             }
             .show()
     }
 
-    private fun saveTemplate() {
-        val name = nameField.text.toString().trim()
-        val rects = trainView.rects
-        if (name.isEmpty()) {
-            toast("Digite o nome do app (use \"Apps recentes\")")
-            return
+    private fun askDelete() {
+        val builder = AlertDialog.Builder(this)
+            .setTitle("Apagar")
+            .setMessage("Apagar todas as marcações da tela?")
+            .setPositiveButton("Apagar marcações") { _, _ ->
+                dismissPopup()
+                trainView.rects.clear()
+                hint.visibility = if (bitmap != null) View.VISIBLE else View.GONE
+                trainView.invalidate()
+            }
+            .setNegativeButton("Cancelar", null)
+        val name = loadedName
+        if (name != null) {
+            builder.setNeutralButton("Apagar modelo salvo") { _, _ ->
+                TemplateStore.delete(this, name)
+                loadedName = null
+                dismissPopup()
+                trainView.rects.clear()
+                trainView.invalidate()
+                toast("Modelo apagado: $name")
+            }
         }
+        builder.show()
+    }
+
+    private fun confirm() {
+        dismissPopup()
+        val rects = trainView.rects
         if (!rects.containsKey(Field.VALOR)) {
             toast("Marque o valor da rota")
             return
@@ -237,74 +324,82 @@ class TrainActivity : Activity() {
             toast("Marque o KM (único, ou ida e volta)")
             return
         }
-        TemplateStore.save(this, Template(name, LinkedHashMap(rects)))
-        toast("Modelo salvo para $name")
-    }
-
-    private fun deleteTemplate() {
-        val name = nameField.text.toString().trim()
-        if (name.isEmpty() || TemplateStore.get(this, name) == null) {
-            toast("Não há modelo salvo com esse nome")
-            return
-        }
-        TemplateStore.delete(this, name)
-        toast("Modelo apagado: $name")
-    }
-
-    private fun testReading() {
+        val marked = LinkedHashMap(rects)
         val b = bitmap
         if (b == null) {
-            toast("Escolha a imagem primeiro")
-            return
-        }
-        if (trainView.rects.isEmpty()) {
-            toast("Marque pelo menos o valor e o KM")
+            askSave(marked, null)
             return
         }
         toast("Lendo a imagem...")
-        val marked = LinkedHashMap(trainView.rects)
         OcrReader.readFull(b) { res ->
             if (res == null) {
                 toast("Falha ao ler a imagem")
             } else {
-                val reading = TemplateReader.read(Template("teste", marked), res.words, b.width, b.height)
-                val sb = StringBuilder()
-                for (f in Field.values()) {
-                    val shown = if (!marked.containsKey(f)) {
-                        "(em branco)"
-                    } else {
-                        val t = reading.raw[f] ?: ""
-                        if (t.isBlank()) "(nada lido)" else t
-                    }
-                    sb.append(f.label).append(": ").append(shown).append('\n')
-                }
-                val o = reading.offer
-                if (o == null) {
-                    sb.append("\nNão deu para calcular: faltou valor ou KM legível.")
-                } else {
-                    sb.append("\nValor ").append(OfferCalculator.money(o.amount))
-                        .append(" | ").append(OfferCalculator.decimal(o.km)).append(" km")
-                        .append(" | ").append(o.minutes.toInt()).append(" min")
-                    val calc = OfferCalculator.calculate(o.amount, o.km, o.minutes, AppConfig.load(this))
-                    if (calc != null) {
-                        sb.append("\nKM ").append(OfferCalculator.money(calc.perKm))
-                            .append(" | Hora ").append(calc.perHour?.let { OfferCalculator.money(it) } ?: "—")
-                            .append(" | Lucro ").append(OfferCalculator.money(calc.profit))
-                    }
-                }
-                AlertDialog.Builder(this)
-                    .setTitle("O que o app leu")
-                    .setMessage(sb.toString())
-                    .setPositiveButton("Fechar", null)
-                    .show()
+                askSave(marked, TemplateReader.read(Template("teste", marked), res.words, b.width, b.height))
             }
         }
     }
 
-    // Mostra a imagem e deixa arrastar retângulos; guarda tudo em proporção (0..1).
+    private fun report(marked: Map<Field, RectF>, reading: TemplateReader.Reading?): String {
+        val sb = StringBuilder()
+        if (reading == null) {
+            sb.append("Sem imagem para conferir a leitura.")
+            return sb.toString()
+        }
+        for (f in Field.values()) {
+            val shown = if (!marked.containsKey(f)) {
+                "(em branco)"
+            } else {
+                val t = reading.raw[f] ?: ""
+                if (t.isBlank()) "(nada lido)" else t
+            }
+            sb.append(f.label).append(": ").append(shown).append('\n')
+        }
+        val o = reading.offer
+        if (o == null) {
+            sb.append("\nNão deu para calcular: faltou valor ou KM legível.")
+        } else {
+            sb.append("\nValor ").append(OfferCalculator.money(o.amount))
+                .append(" | ").append(OfferCalculator.decimal(o.km)).append(" km")
+                .append(" | ").append(o.minutes.toInt()).append(" min")
+            val calc = OfferCalculator.calculate(o.amount, o.km, o.minutes, AppConfig.load(this))
+            if (calc != null) {
+                sb.append("\nKM ").append(OfferCalculator.money(calc.perKm))
+                    .append(" | Hora ").append(calc.perHour?.let { OfferCalculator.money(it) } ?: "—")
+                    .append(" | Lucro ").append(OfferCalculator.money(calc.profit))
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun askSave(marked: Map<Field, RectF>, reading: TemplateReader.Reading?) {
+        val current = loadedName
+        val builder = AlertDialog.Builder(this)
+            .setTitle("O que o app leu")
+            .setMessage(report(marked, reading))
+            .setPositiveButton(if (current != null) "Substituir" else "Salvar") { _, _ ->
+                persist(marked, current ?: TemplateStore.nextName(this))
+            }
+            .setNegativeButton("Voltar", null)
+        if (current != null) {
+            builder.setNeutralButton("Salvar novo") { _, _ -> persist(marked, TemplateStore.nextName(this)) }
+        }
+        builder.show()
+    }
+
+    private fun persist(marked: Map<Field, RectF>, name: String) {
+        TemplateStore.save(this, Template(name, LinkedHashMap(marked)))
+        loadedName = name
+        toast("Modelo salvo: $name")
+        finish()
+    }
+
+    // ---------- Imagem + retângulos ----------
+
     inner class TrainView(ctx: Context) : View(ctx) {
         val rects = LinkedHashMap<Field, RectF>()
         var bmp: Bitmap? = null
+        var pending: RectF? = null
         private var dragStart: PointF? = null
         private var dragNow: PointF? = null
         private val dst = RectF()
@@ -332,40 +427,44 @@ class TrainActivity : Activity() {
             dst.set(l, t, l + w, t + h)
         }
 
-        private fun toScreen(r: RectF): RectF = RectF(
-            dst.left + r.left * dst.width(),
-            dst.top + r.top * dst.height(),
-            dst.left + r.right * dst.width(),
-            dst.top + r.bottom * dst.height()
-        )
+        fun toScreen(r: RectF): RectF {
+            computeDst()
+            return RectF(
+                dst.left + r.left * dst.width(),
+                dst.top + r.top * dst.height(),
+                dst.left + r.right * dst.width(),
+                dst.top + r.bottom * dst.height()
+            )
+        }
 
         private fun drawMark(c: Canvas, f: Field, r: RectF) {
             val color = fieldColor(f)
             val p = toScreen(r)
-            fill.color = Color.argb(70, Color.red(color), Color.green(color), Color.blue(color))
+            fill.color = Color.argb(80, Color.red(color), Color.green(color), Color.blue(color))
             stroke.color = color
             c.drawRect(p, fill)
             c.drawRect(p, stroke)
-            c.drawText(f.short, p.left + dp(3), p.top + dp(14), label)
+            c.drawText(f.short, p.left + dp(3), p.top - dp(4), label)
         }
 
         override fun onDraw(canvas: Canvas) {
-            canvas.drawColor(Color.rgb(30, 30, 30))
             val b = bmp
-            if (b == null) {
-                label.textAlign = Paint.Align.CENTER
-                canvas.drawText("Nenhuma imagem escolhida", width / 2f, height / 2f, label)
-                label.textAlign = Paint.Align.LEFT
-                return
-            }
+            if (b == null) return
             computeDst()
             canvas.drawBitmap(b, null, dst, null)
             for ((f, r) in rects) drawMark(canvas, f, r)
+            val pd = pending
+            if (pd != null) {
+                val p = toScreen(pd)
+                fill.color = Color.argb(60, 255, 255, 255)
+                stroke.color = Color.WHITE
+                canvas.drawRect(p, fill)
+                canvas.drawRect(p, stroke)
+            }
             val s = dragStart
             val n = dragNow
             if (s != null && n != null) {
-                val color = fieldColor(selected)
-                stroke.color = color
+                stroke.color = Color.WHITE
                 canvas.drawRect(minOf(s.x, n.x), minOf(s.y, n.y), maxOf(s.x, n.x), maxOf(s.y, n.y), stroke)
             }
         }
@@ -374,6 +473,7 @@ class TrainActivity : Activity() {
             if (bmp == null) return false
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> {
+                    dismissPopup()
                     dragStart = PointF(e.x, e.y)
                     dragNow = PointF(e.x, e.y)
                     invalidate()
@@ -400,14 +500,20 @@ class TrainActivity : Activity() {
             val n = dragNow
             dragStart = null
             dragNow = null
+            computeDst()
             if (s != null && n != null && dst.width() > 0f && dst.height() > 0f) {
-                val l = ((minOf(s.x, n.x) - dst.left) / dst.width()).coerceIn(0f, 1f)
-                val t = ((minOf(s.y, n.y) - dst.top) / dst.height()).coerceIn(0f, 1f)
-                val r = ((maxOf(s.x, n.x) - dst.left) / dst.width()).coerceIn(0f, 1f)
-                val b = ((maxOf(s.y, n.y) - dst.top) / dst.height()).coerceIn(0f, 1f)
-                if (r - l > 0.01f && b - t > 0.004f) {
-                    rects[selected] = RectF(l, t, r, b)
-                    refreshChips()
+                val w = abs(n.x - s.x)
+                val h = abs(n.y - s.y)
+                if (w < dp(12) && h < dp(12)) {
+                    // Toque simples: se foi sobre uma marcação, reabre o flutuante dela.
+                    val hit = rects.entries.toList().asReversed().firstOrNull { toScreen(it.value).contains(n.x, n.y) }
+                    if (hit != null) showPopup(RectF(hit.value), hit.key)
+                } else {
+                    val l = ((minOf(s.x, n.x) - dst.left) / dst.width()).coerceIn(0f, 1f)
+                    val t = ((minOf(s.y, n.y) - dst.top) / dst.height()).coerceIn(0f, 1f)
+                    val r = ((maxOf(s.x, n.x) - dst.left) / dst.width()).coerceIn(0f, 1f)
+                    val b = ((maxOf(s.y, n.y) - dst.top) / dst.height()).coerceIn(0f, 1f)
+                    if (r - l > 0.01f && b - t > 0.004f) showPopup(RectF(l, t, r, b), null)
                 }
             }
             invalidate()

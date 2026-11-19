@@ -24,7 +24,6 @@ class AccessibilityReader : AccessibilityService() {
     private var lastOfferKey = ""
     private var lastOcrTime = 0L
     private val screenshotInProgress = AtomicBoolean(false)
-    private var lastPackage: String? = null
     private val trailingCapture = Runnable {
         if (AppConfig.isEnabled(this)) captureForOcr()
     }
@@ -84,13 +83,8 @@ class AccessibilityReader : AccessibilityService() {
             root.recycle()
             return
         }
-        val pkg = root.packageName?.toString()
-        if (pkg != null) {
-            lastPackage = pkg
-            TemplateStore.recordPackage(pkg)
-        }
-        if (TemplateStore.forPackage(this, pkg) != null) {
-            // App treinado: lê por foto, nas áreas marcadas no treino.
+        if (TemplateStore.hasAny(this)) {
+            // Há modelo treinado: lê por foto, nas áreas marcadas no treino (vale em qualquer app).
             root.recycle()
             handler.removeCallbacks(trailingCapture)
             captureForOcr()
@@ -167,7 +161,7 @@ class AccessibilityReader : AccessibilityService() {
                                     if (manual) toast("Falha ao ler o print")
                                 } else {
                                     val items = res.lines
-                                    val trained = readByTemplate(res, bitmap.width, bitmap.height, manual)
+                                    val trained = readByTemplate(res, bitmap.width, bitmap.height)
                                     val rides = if (trained != null) listOf(trained) else OfferParser.findRides(items)
                                     if (manual) DebugLog.recordManual(items, rides.size) else DebugLog.recordOcr(items, rides.size)
                                     if (rides.isNotEmpty()) {
@@ -206,17 +200,10 @@ class AccessibilityReader : AccessibilityService() {
         )
     }
 
-    // Modelo treinado: do app que está na tela; no print manual, se não houver, tenta todos os modelos.
-    private fun readByTemplate(res: OcrResult, w: Int, h: Int, manual: Boolean): OfferParser.ParsedOffer? {
-        val own = TemplateStore.forPackage(this, lastPackage)
-        if (own != null) {
-            TemplateReader.read(own, res.words, w, h).offer?.let { return it }
-        }
-        if (manual) {
-            for (t in TemplateStore.all(this)) {
-                if (t.name == own?.name) continue
-                TemplateReader.read(t, res.words, w, h).offer?.let { return it }
-            }
+    // Tenta cada modelo treinado; o primeiro que ler valor e KM válidos vale.
+    private fun readByTemplate(res: OcrResult, w: Int, h: Int): OfferParser.ParsedOffer? {
+        for (t in TemplateStore.all(this)) {
+            TemplateReader.read(t, res.words, w, h).offer?.let { return it }
         }
         return null
     }
