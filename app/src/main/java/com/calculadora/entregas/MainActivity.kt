@@ -53,7 +53,7 @@ class MainActivity : Activity() {
         }
 
         val titleView = TextView(this)
-        titleView.text = "Calculadora de Entregas"
+        titleView.text = "Calculadora de Entregas v7"
         titleView.textSize = 24f
         titleView.gravity = Gravity.CENTER
         add(titleView)
