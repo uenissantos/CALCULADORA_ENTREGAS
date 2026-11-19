@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Calculadora de Entregas</string>
+    <string name="accessibility_description">Lê informações visíveis de ofertas de entrega para calcular o valor por quilômetro. O processamento é feito no aparelho.</string>
+</resources>
