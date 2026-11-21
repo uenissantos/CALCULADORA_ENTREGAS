@@ -15,6 +15,8 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.text.InputType
+import android.widget.EditText
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -30,6 +32,9 @@ import kotlin.math.abs
 // flutuante para dizer se é Valor, KM ou Tempo. Embaixo: apagar e confirmar (salvar).
 class TrainActivity : Activity() {
     private val pickCode = 1001
+    private val createCode = 1002
+    private val openCode = 1003
+    private val artifactCode = 1004
     private var bitmap: Bitmap? = null
     private var loadedName: String? = null
     private var popup: View? = null
@@ -105,7 +110,7 @@ class TrainActivity : Activity() {
         val pick = Button(this)
         pick.text = "Escolher imagem da galeria"
         pick.isAllCaps = false
-        pick.setOnClickListener { pickImage() }
+        pick.setOnClickListener { pickSource() }
         emptyBox.addView(pick)
         root.addView(emptyBox, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
 
@@ -121,14 +126,24 @@ class TrainActivity : Activity() {
         root.addView(hint, hlp)
 
         // Em cima: trocar imagem e abrir modelos salvos.
-        place(circle("🖼", Color.argb(200, 30, 30, 30)) { pickImage() }, 48, Gravity.TOP or Gravity.START, 12, 36, 0, 0)
+        place(circle("🖼", Color.argb(200, 30, 30, 30)) { pickSource() }, 48, Gravity.TOP or Gravity.START, 12, 36, 0, 0)
         place(circle("📋", Color.argb(200, 30, 30, 30)) { pickSaved() }, 48, Gravity.TOP or Gravity.START, 68, 36, 0, 0)
+        place(circle("💾", Color.argb(200, 30, 30, 30)) { backupMenu() }, 48, Gravity.TOP or Gravity.START, 124, 36, 0, 0)
 
         // Embaixo, por cima da foto: apagar e confirmar.
         place(circle("🗑", Color.rgb(198, 40, 40)) { askDelete() }, 60, Gravity.BOTTOM or Gravity.START, 24, 0, 0, 56)
         place(circle("✓", Color.rgb(0, 150, 80)) { confirm() }, 60, Gravity.BOTTOM or Gravity.END, 0, 0, 24, 56)
 
         setContentView(root)
+    }
+
+    private fun pickSource() {
+        AlertDialog.Builder(this)
+            .setTitle("Imagem para treinar")
+            .setItems(arrayOf("Galeria", "Prints guardados no app (Artefatos)")) { _, which ->
+                if (which == 0) pickImage() else pickArtifact()
+            }
+            .show()
     }
 
     @Suppress("DEPRECATION")
@@ -140,21 +155,102 @@ class TrainActivity : Activity() {
     }
 
     @Suppress("DEPRECATION")
+    private fun pickArtifact() {
+        val i = Intent(this, ArtifactsActivity::class.java)
+        i.putExtra(ArtifactsActivity.EXTRA_PICK, true)
+        startActivityForResult(i, artifactCode)
+    }
+
+    private fun showBitmap(b: Bitmap) {
+        bitmap = b
+        trainView.bmp = b
+        emptyBox.visibility = View.GONE
+        hint.visibility = if (trainView.rects.isEmpty()) View.VISIBLE else View.GONE
+        dismissPopup()
+        trainView.invalidate()
+    }
+
+    @Suppress("DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != pickCode || resultCode != RESULT_OK) return
-        val uri = data?.data ?: return
-        val b = loadBitmap(uri)
-        if (b == null) {
-            toast("Não consegui abrir a imagem")
-        } else {
-            bitmap = b
-            trainView.bmp = b
-            emptyBox.visibility = View.GONE
-            hint.visibility = if (trainView.rects.isEmpty()) View.VISIBLE else View.GONE
-            dismissPopup()
-            trainView.invalidate()
+        if (resultCode != RESULT_OK) return
+        when (requestCode) {
+            pickCode -> {
+                val uri = data?.data ?: return
+                val b = loadBitmap(uri)
+                if (b == null) toast("Não consegui abrir a imagem") else showBitmap(b)
+            }
+            artifactCode -> {
+                val id = data?.getStringExtra(ArtifactsActivity.EXTRA_ID) ?: return
+                val b = ArtifactRender.decode(ArtifactStore.imageFile(this, id), 2600)
+                if (b == null) toast("Não consegui abrir o print") else showBitmap(b)
+            }
+            createCode -> {
+                val uri = data?.data ?: return
+                doBackup(uri)
+            }
+            openCode -> {
+                val uri = data?.data ?: return
+                doRestore(uri)
+            }
         }
+    }
+
+    // ---------- Backup e restauração ----------
+
+    private fun backupMenu() {
+        AlertDialog.Builder(this)
+            .setTitle("Backup dos modelos")
+            .setItems(arrayOf("Fazer backup (salvar arquivo)", "Restaurar backup (abrir arquivo)")) { _, which ->
+                if (which == 0) startBackup() else startRestore()
+            }
+            .show()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun startBackup() {
+        if (!TemplateStore.hasAny(this)) {
+            toast("Não há modelo salvo para fazer backup")
+            return
+        }
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmm", java.util.Locale.US).format(java.util.Date())
+        val i = Intent(Intent.ACTION_CREATE_DOCUMENT)
+        i.addCategory(Intent.CATEGORY_OPENABLE)
+        i.type = "application/zip"
+        i.putExtra(Intent.EXTRA_TITLE, "backup_modelos_$stamp.zip")
+        startActivityForResult(i, createCode)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun startRestore() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
+        i.addCategory(Intent.CATEGORY_OPENABLE)
+        i.type = "*/*"
+        startActivityForResult(i, openCode)
+    }
+
+    private fun doBackup(uri: Uri) {
+        Thread {
+            val msg = try {
+                val n = contentResolver.openOutputStream(uri)?.use { TemplateStore.backupTo(this, it) } ?: -1
+                if (n < 0) "Não consegui gravar o arquivo" else "Backup feito: $n modelo(s) com as imagens"
+            } catch (_: Exception) {
+                "Falha ao fazer o backup"
+            }
+            runOnUiThread { toast(msg) }
+        }.start()
+    }
+
+    private fun doRestore(uri: Uri) {
+        Thread {
+            val msg = try {
+                val n = contentResolver.openInputStream(uri)?.use { TemplateStore.restoreFrom(this, it) } ?: -1
+                if (n < 0) "Não consegui abrir o arquivo" else if (n == 0) "Nenhum modelo encontrado nesse arquivo" else "Restaurado: $n modelo(s)"
+            } catch (_: Exception) {
+                "Arquivo de backup inválido"
+            }
+            runOnUiThread { toast(msg) }
+        }.start()
     }
 
     private fun loadBitmap(uri: Uri): Bitmap? {
@@ -282,8 +378,14 @@ class TrainActivity : Activity() {
                 trainView.rects.clear()
                 for ((f, r) in t.fields) trainView.rects[f] = RectF(r)
                 hint.visibility = View.GONE
+                val saved = TemplateStore.loadImage(this, t.name)
+                if (saved != null) {
+                    showBitmap(saved)
+                    hint.visibility = View.GONE
+                } else if (bitmap == null) {
+                    toast("Modelo carregado, mas sem imagem guardada. Escolha uma imagem (ícone no canto).")
+                }
                 trainView.invalidate()
-                if (bitmap == null) toast("Modelo carregado. Escolha a imagem (ícone no canto) para conferir.")
             }
             .show()
     }
@@ -373,22 +475,52 @@ class TrainActivity : Activity() {
     }
 
     private fun askSave(marked: Map<Field, RectF>, reading: TemplateReader.Reading?) {
-        val current = loadedName
-        val builder = AlertDialog.Builder(this)
+        AlertDialog.Builder(this)
             .setTitle("O que o app leu")
             .setMessage(report(marked, reading))
-            .setPositiveButton(if (current != null) "Substituir" else "Salvar") { _, _ ->
-                persist(marked, current ?: TemplateStore.nextName(this))
-            }
+            .setPositiveButton("Salvar") { _, _ -> askName(marked) }
             .setNegativeButton("Voltar", null)
-        if (current != null) {
-            builder.setNeutralButton("Salvar novo") { _, _ -> persist(marked, TemplateStore.nextName(this)) }
-        }
-        builder.show()
+            .show()
     }
 
+    // Você escolhe o nome. Com o mesmo nome do modelo aberto, substitui; com outro nome, cria um novo.
+    private fun askName(marked: Map<Field, RectF>) {
+        val current = loadedName
+        val input = EditText(this)
+        input.inputType = InputType.TYPE_CLASS_TEXT
+        input.setSingleLine()
+        input.setText(current ?: TemplateStore.nextName(this))
+        input.setSelection(input.text.length)
+        val box = LinearLayout(this)
+        box.setPadding(dp(20), dp(8), dp(20), 0)
+        box.addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        AlertDialog.Builder(this)
+            .setTitle("Nome do modelo")
+            .setView(box)
+            .setPositiveButton("Salvar") { _, _ ->
+                val name = input.text.toString().trim().take(40)
+                if (name.isEmpty()) {
+                    toast("Digite um nome")
+                } else if (name != current && TemplateStore.exists(this, name)) {
+                    AlertDialog.Builder(this)
+                        .setTitle("Já existe")
+                        .setMessage("Já existe um modelo chamado \"$name\". Substituir?")
+                        .setPositiveButton("Substituir") { _, _ -> persist(marked, name) }
+                        .setNegativeButton("Cancelar", null)
+                        .show()
+                } else {
+                    persist(marked, name)
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    // Guarda os retângulos e uma cópia da imagem dentro do app (não some se apagar da galeria).
     private fun persist(marked: Map<Field, RectF>, name: String) {
         TemplateStore.save(this, Template(name, LinkedHashMap(marked)))
+        val b = bitmap
+        if (b != null) TemplateStore.saveImage(this, name, b)
         loadedName = name
         toast("Modelo salvo: $name")
         finish()

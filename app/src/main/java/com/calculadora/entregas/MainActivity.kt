@@ -59,7 +59,7 @@ class MainActivity : Activity() {
         add(titleView)
 
         val help = TextView(this)
-        help.text = "1) Ative a acessibilidade.\n2) Ajuste os valores e salve.\n3) Toque no botão flutuante ON/OFF: abre PRINT (lê a tela na hora e mostra o card) e DESLIGAR/LIGAR."
+        help.text = "1) Ative a acessibilidade.\n2) Ajuste os valores e salve.\n3) Toque no botão flutuante: abrem 4 ícones em volta dele. Ligar/desligar a leitura automática, calculadora (lê a tela na hora e mostra o card), câmera (tira um print real e guarda em Artefatos para treinar) e X (tira o botão da tela; para trazer de volta, use Mostrar botão flutuante aqui)."
         help.textSize = 14f
         add(help)
 
@@ -118,6 +118,33 @@ class MainActivity : Activity() {
         train.text = "Treinar (marcar onde fica cada item)"
         train.setOnClickListener { startActivity(Intent(this, TrainActivity::class.java)) }
         add(train)
+
+        val artifacts = Button(this)
+        artifacts.text = "Artefatos (prints e leituras guardados)"
+        artifacts.setOnClickListener { startActivity(Intent(this, ArtifactsActivity::class.java)) }
+        add(artifacts)
+
+        val keep = Button(this)
+        fun keepText() = "Guardar também as leituras certas: " + if (ArtifactStore.keepSuccess(this)) "SIM" else "NÃO"
+        keep.text = keepText()
+        keep.setOnClickListener {
+            ArtifactStore.setKeepSuccess(this, !ArtifactStore.keepSuccess(this))
+            keep.text = keepText()
+        }
+        add(keep)
+
+        val showButton = Button(this)
+        showButton.text = "Mostrar botão flutuante"
+        showButton.setOnClickListener {
+            val service = AccessibilityReader.instance
+            if (service == null) {
+                Toast.makeText(this, "Ative a acessibilidade primeiro", Toast.LENGTH_LONG).show()
+            } else {
+                service.showOverlay()
+                Toast.makeText(this, "Botão na tela (leitura automática desligada até você ligar)", Toast.LENGTH_LONG).show()
+            }
+        }
+        add(showButton)
 
         val diag = Button(this)
         diag.text = "Diagnóstico (o que o app leu)"

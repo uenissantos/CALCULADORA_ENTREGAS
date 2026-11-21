@@ -1,9 +1,17 @@
 package com.calculadora.entregas
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.RectF
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
 // Cada campo que o usuário pode marcar na imagem de treino.
 enum class Field(val label: String, val short: String) {
@@ -41,7 +49,7 @@ object TemplateStore {
         return "Modelo $n"
     }
 
-    fun save(c: Context, t: Template) {
+    private fun fieldsJson(t: Template): JSONObject {
         val o = JSONObject()
         for ((f, r) in t.fields) {
             val a = JSONArray()
@@ -51,11 +59,103 @@ object TemplateStore {
             a.put(r.bottom.toDouble())
             o.put(f.name, a)
         }
-        prefs(c).edit().putString(t.name, o.toString()).apply()
+        return o
     }
+
+    fun save(c: Context, t: Template) {
+        prefs(c).edit().putString(t.name, fieldsJson(t).toString()).apply()
+    }
+
+    fun exists(c: Context, name: String): Boolean = prefs(c).contains(name)
 
     fun delete(c: Context, name: String) {
         prefs(c).edit().remove(name).apply()
+        imageFile(c, name).delete()
+    }
+
+    // ---------- Imagem de treino guardada dentro do app ----------
+
+    fun imageFile(c: Context, name: String): File {
+        val d = File(c.filesDir, "modelos")
+        if (!d.exists()) d.mkdirs()
+        val safe = name.filter { it.isLetterOrDigit() }.take(24)
+        return File(d, safe + "_" + Integer.toHexString(name.hashCode()) + ".jpg")
+    }
+
+    fun saveImage(c: Context, name: String, bmp: Bitmap) {
+        try {
+            imageFile(c, name).outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 92, it) }
+        } catch (_: Exception) {
+        }
+    }
+
+    fun loadImage(c: Context, name: String): Bitmap? {
+        val f = imageFile(c, name)
+        if (!f.exists()) return null
+        return try {
+            BitmapFactory.decodeFile(f.absolutePath)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // ---------- Backup e restauração (modelos + imagens) ----------
+
+    fun backupTo(c: Context, out: OutputStream): Int {
+        val list = all(c)
+        ZipOutputStream(out.buffered()).use { z ->
+            var i = 1
+            for (t in list) {
+                val meta = JSONObject()
+                meta.put("name", t.name)
+                meta.put("campos", fieldsJson(t))
+                val img = imageFile(c, t.name)
+                val imgName = "modelo_$i.jpg"
+                if (img.exists()) meta.put("imagem", imgName)
+                z.putNextEntry(ZipEntry("modelo_$i.json"))
+                z.write(meta.toString().toByteArray(Charsets.UTF_8))
+                z.closeEntry()
+                if (img.exists()) {
+                    z.putNextEntry(ZipEntry(imgName))
+                    img.inputStream().use { it.copyTo(z) }
+                    z.closeEntry()
+                }
+                i++
+            }
+        }
+        return list.size
+    }
+
+    fun restoreFrom(c: Context, input: InputStream): Int {
+        val jsons = ArrayList<String>()
+        val images = HashMap<String, ByteArray>()
+        ZipInputStream(input.buffered()).use { z ->
+            var e = z.nextEntry
+            while (e != null) {
+                val bytes = z.readBytes()
+                if (e.name.endsWith(".json")) {
+                    jsons.add(String(bytes, Charsets.UTF_8))
+                } else if (e.name.endsWith(".jpg")) {
+                    images[e.name] = bytes
+                }
+                z.closeEntry()
+                e = z.nextEntry
+            }
+        }
+        var count = 0
+        for (text in jsons) {
+            try {
+                val meta = JSONObject(text)
+                val name = meta.getString("name")
+                val campos = meta.getJSONObject("campos")
+                prefs(c).edit().putString(name, campos.toString()).apply()
+                val bytes = images[meta.optString("imagem")]
+                if (bytes != null) imageFile(c, name).writeBytes(bytes)
+                count++
+            } catch (_: Exception) {
+            }
+        }
+        return count
     }
 
     fun get(c: Context, name: String): Template? = parse(name, prefs(c).getString(name, null))

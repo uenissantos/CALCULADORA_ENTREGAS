@@ -47,5 +47,12 @@ data class AppConfig(
         fun setEnabled(c: Context, value: Boolean) {
             prefs(c).edit().putBoolean("ativo", value).apply()
         }
+
+        // Botão flutuante na tela ou removido (volta pelo botão "Mostrar botão flutuante" do app).
+        fun isOverlayVisible(c: Context): Boolean = prefs(c).getBoolean("botaoVisivel", true)
+
+        fun setOverlayVisible(c: Context, value: Boolean) {
+            prefs(c).edit().putBoolean("botaoVisivel", value).apply()
+        }
     }
 }

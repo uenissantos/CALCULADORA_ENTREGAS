@@ -2,8 +2,12 @@ package com.calculadora.entregas
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
@@ -19,12 +23,14 @@ import kotlin.math.abs
 class OverlayUi(
     private val service: AccessibilityService,
     private val onPower: () -> Unit,
-    private val onPrint: () -> Unit
+    private val onCalc: () -> Unit,
+    private val onShot: () -> Unit,
+    private val onClose: () -> Unit
 ) {
     private val wm = service.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val handler = Handler(Looper.getMainLooper())
     private var card: View? = null
-    private var button: TextView? = null
+    private var button: IconView? = null
     private var line: View? = null
     private var buttonParams: WindowManager.LayoutParams? = null
     private val menuViews = ArrayList<View>()
@@ -191,11 +197,8 @@ class OverlayUi(
     fun showButton(active: Boolean) {
         if (button == null) {
             val size = dp(52)
-            val b = TextView(service)
-            b.gravity = Gravity.CENTER
-            b.textSize = 13f
-            b.setTextColor(white)
-            b.setTypeface(b.typeface, Typeface.BOLD)
+            val b = IconView(service, IconView.MAIN)
+            b.contentDescription = "Botão da calculadora"
 
             val params = WindowManager.LayoutParams(
                 size,
@@ -254,63 +257,59 @@ class OverlayUi(
         updateButton(active)
     }
 
-    private fun pill(content: String, color: Int, action: () -> Unit): TextView {
-        val v = TextView(service)
-        v.text = content
-        v.textSize = 13f
-        v.gravity = Gravity.CENTER
-        v.setTextColor(white)
-        v.setTypeface(v.typeface, Typeface.BOLD)
-        val bg = GradientDrawable()
-        bg.cornerRadius = dp(22).toFloat()
-        bg.setColor(color)
-        bg.setStroke(dp(2), white)
-        v.background = bg
-        v.setOnClickListener {
-            closeMenu()
-            action()
-        }
-        return v
-    }
+    private class MenuDef(val kind: Int, val color: Int, val desc: String, val action: () -> Unit)
 
     private fun toggleMenu() {
         if (menuViews.isEmpty()) openMenu() else closeMenu()
     }
 
+    // Os ícones abrem em arco ao redor do botão principal, virados para o centro da tela.
     private fun openMenu() {
         val bp = buttonParams ?: return
-        val w = dp(92)
-        val h = dp(44)
-        val gap = dp(8)
+        val dm = service.resources.displayMetrics
         val size = dp(52)
-        val screenW = service.resources.displayMetrics.widthPixels
-        val rightHalf = bp.x + size / 2 > screenW / 2
-        val x1 = if (rightHalf) bp.x - gap - w else bp.x + size + gap
-        val x2 = if (rightHalf) x1 - gap - w else x1 + w + gap
-        val y = bp.y + (size - h) / 2
+        val item = dp(46)
+        val radius = dp(78)
+        val cx = bp.x + size / 2.0
+        val cy = bp.y + size / 2.0
+        val dir = Math.atan2(dm.heightPixels / 2.0 - cy, dm.widthPixels / 2.0 - cx)
+        val step = Math.toRadians(48.0)
 
         val active = AppConfig.isEnabled(service)
-        val items = listOf(
-            Pair(pill("PRINT", Color.rgb(25, 118, 210)) { onPrint() }, x1),
-            Pair(
-                pill(if (active) "DESLIGAR" else "LIGAR", if (active) Color.rgb(190, 30, 50) else Color.rgb(0, 150, 80)) { onPower() },
-                x2
-            )
+        val defs = listOf(
+            MenuDef(IconView.POWER, if (active) Color.rgb(0, 150, 80) else Color.rgb(190, 30, 50), "Ligar ou desligar a leitura automática") { onPower() },
+            MenuDef(IconView.CALC, Color.rgb(25, 118, 210), "Calcular agora") { onCalc() },
+            MenuDef(IconView.CAMERA, Color.rgb(123, 31, 162), "Tirar print e guardar no app") { onShot() },
+            MenuDef(IconView.CLOSE, Color.rgb(90, 90, 90), "Tirar o botão da tela") { onClose() }
         )
-        for (entry in items) {
+        for (i in defs.indices) {
+            val def = defs[i]
+            val angle = dir + (i - 1.5) * step
+            var x = (cx + radius * Math.cos(angle) - item / 2.0).toInt()
+            var y = (cy + radius * Math.sin(angle) - item / 2.0).toInt()
+            x = x.coerceIn(dp(4), maxOf(dp(4), dm.widthPixels - item - dp(4)))
+            y = y.coerceIn(dp(24), maxOf(dp(24), dm.heightPixels - item - dp(24)))
+
+            val v = IconView(service, def.kind)
+            v.fillColor = def.color
+            v.contentDescription = def.desc
+            v.setOnClickListener {
+                closeMenu()
+                def.action()
+            }
             val params = WindowManager.LayoutParams(
-                w,
-                h,
+                item,
+                item,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                 PixelFormat.TRANSLUCENT
             )
             params.gravity = Gravity.TOP or Gravity.START
-            params.x = entry.second
+            params.x = x
             params.y = y
             try {
-                wm.addView(entry.first, params)
-                menuViews.add(entry.first)
+                wm.addView(v, params)
+                menuViews.add(v)
             } catch (_: Exception) {
             }
         }
@@ -337,12 +336,8 @@ class OverlayUi(
 
     fun updateButton(active: Boolean) {
         val b = button ?: return
-        val bg = GradientDrawable()
-        bg.shape = GradientDrawable.OVAL
-        bg.setColor(if (active) BuildInfo.COLOR else Color.rgb(190, 30, 50))
-        bg.setStroke(dp(2), white)
-        b.background = bg
-        b.text = if (active) "ON" else "OFF"
+        b.fillColor = if (active) BuildInfo.COLOR else Color.rgb(190, 30, 50)
+        b.off = !active
     }
 
     fun destroy() {
@@ -353,5 +348,98 @@ class OverlayUi(
             try { wm.removeView(it) } catch (_: Exception) {}
         }
         button = null
+    }
+}
+
+// Ícones desenhados no código (sem depender de fontes ou imagens).
+class IconView(ctx: Context, private val kind: Int) : View(ctx) {
+    companion object {
+        const val MAIN = 0
+        const val POWER = 1
+        const val CALC = 2
+        const val CAMERA = 3
+        const val CLOSE = 4
+    }
+
+    var fillColor: Int = Color.GRAY
+        set(value) {
+            field = value
+            invalidate()
+        }
+    var off: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val ring = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val ic = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val icFill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rect = RectF()
+    private val path = Path()
+
+    init {
+        fill.style = Paint.Style.FILL
+        ring.style = Paint.Style.STROKE
+        ring.color = Color.WHITE
+        ic.style = Paint.Style.STROKE
+        ic.color = Color.WHITE
+        ic.strokeCap = Paint.Cap.ROUND
+        ic.strokeJoin = Paint.Join.ROUND
+        icFill.style = Paint.Style.FILL
+        icFill.color = Color.WHITE
+    }
+
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat()
+        val cx = w / 2f
+        val cy = height / 2f
+        ring.strokeWidth = w * 0.045f
+        fill.color = fillColor
+        val r = w / 2f - ring.strokeWidth / 2f
+        c.drawCircle(cx, cy, r, fill)
+        c.drawCircle(cx, cy, r, ring)
+        ic.strokeWidth = w * 0.07f
+
+        when (kind) {
+            MAIN -> {
+                c.drawCircle(cx, cy, 0.2f * w, ic)
+                c.drawCircle(cx, cy, 0.07f * w, icFill)
+                if (off) c.drawLine(cx - 0.27f * w, cy + 0.27f * w, cx + 0.27f * w, cy - 0.27f * w, ic)
+            }
+            POWER -> {
+                val oy = cy + 0.03f * w
+                rect.set(cx - 0.2f * w, oy - 0.2f * w, cx + 0.2f * w, oy + 0.2f * w)
+                c.drawArc(rect, -60f, 300f, false, ic)
+                c.drawLine(cx, cy - 0.27f * w, cx, cy, ic)
+            }
+            CALC -> {
+                rect.set(cx - 0.22f * w, cy - 0.28f * w, cx + 0.22f * w, cy + 0.28f * w)
+                c.drawRoundRect(rect, 0.05f * w, 0.05f * w, ic)
+                rect.set(cx - 0.14f * w, cy - 0.2f * w, cx + 0.14f * w, cy - 0.1f * w)
+                c.drawRect(rect, icFill)
+                for (row in 0..2) {
+                    for (col in 0..2) {
+                        c.drawCircle(cx + (col - 1) * 0.11f * w, cy + 0.02f * w + row * 0.1f * w, 0.03f * w, icFill)
+                    }
+                }
+            }
+            CAMERA -> {
+                rect.set(cx - 0.27f * w, cy - 0.12f * w, cx + 0.27f * w, cy + 0.2f * w)
+                c.drawRoundRect(rect, 0.06f * w, 0.06f * w, ic)
+                path.reset()
+                path.moveTo(cx - 0.12f * w, cy - 0.12f * w)
+                path.lineTo(cx - 0.07f * w, cy - 0.2f * w)
+                path.lineTo(cx + 0.07f * w, cy - 0.2f * w)
+                path.lineTo(cx + 0.12f * w, cy - 0.12f * w)
+                c.drawPath(path, ic)
+                c.drawCircle(cx, cy + 0.04f * w, 0.09f * w, ic)
+            }
+            else -> {
+                c.drawLine(cx - 0.16f * w, cy - 0.16f * w, cx + 0.16f * w, cy + 0.16f * w, ic)
+                c.drawLine(cx - 0.16f * w, cy + 0.16f * w, cx + 0.16f * w, cy - 0.16f * w, ic)
+            }
+        }
     }
 }

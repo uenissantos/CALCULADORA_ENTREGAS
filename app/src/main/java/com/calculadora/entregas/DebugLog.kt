@@ -12,7 +12,7 @@ object DebugLog {
     var screenshotStatus = "ainda não tentou"
     private var screenInfo = "nada lido ainda"
     private var ocrInfo = "nada lido ainda"
-    private var manualInfo = "ainda não usou o botão PRINT"
+    private var manualInfo = "ainda não usou o botão calculadora"
 
     private fun snapshot(items: List<OfferParser.TextItem>, rides: Int): String {
         val sb = StringBuilder()
@@ -46,7 +46,7 @@ object DebugLog {
         append("Eventos recebidos: ").append(events).append('\n')
         append("Sem janela ativa: ").append(noRoot).append(" | Sem texto: ").append(noItems).append('\n')
         append("Foto da tela: ").append(screenshotStatus).append("\n\n")
-        append("== ÚLTIMO PRINT (BOTÃO PRINT) ==\n").append(manualInfo).append('\n')
+        append("== ÚLTIMA LEITURA (BOTÃO CALCULADORA) ==\n").append(manualInfo).append('\n')
         append("== ÚLTIMA TELA COM VALORES (acessibilidade) ==\n").append(screenInfo).append('\n')
         append("== ÚLTIMA LEITURA POR FOTO (OCR) ==\n").append(ocrInfo)
     }
