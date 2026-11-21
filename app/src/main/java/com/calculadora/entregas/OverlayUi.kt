@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.Typeface
@@ -326,12 +327,23 @@ class OverlayUi(
     }
 
     // Esconde tudo por um instante para o print sair limpo (sem o card por cima).
-    fun setHiddenForCapture(hidden: Boolean) {
+    // keepCard = true: o print real mostra o card que está na tela.
+    fun setHiddenForCapture(hidden: Boolean, keepCard: Boolean = false) {
         val mode = if (hidden) View.INVISIBLE else View.VISIBLE
-        card?.visibility = mode
+        if (!keepCard) card?.visibility = mode
         line?.visibility = mode
         button?.visibility = mode
         for (v in menuViews) v.visibility = mode
+    }
+
+    // Onde o nosso card está na tela (para o leitor ignorar os textos dele). Nulo se não está visível.
+    fun cardBounds(): Rect? {
+        val v = card ?: return null
+        if (v.visibility != View.VISIBLE || v.width == 0) return null
+        val loc = IntArray(2)
+        v.getLocationOnScreen(loc)
+        val pad = dp(8)
+        return Rect(loc[0] - pad, loc[1] - pad, loc[0] + v.width + pad, loc[1] + v.height + pad)
     }
 
     fun updateButton(active: Boolean) {

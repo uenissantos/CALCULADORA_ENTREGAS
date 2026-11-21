@@ -37,6 +37,7 @@ class TrainActivity : Activity() {
     private val artifactCode = 1004
     private var bitmap: Bitmap? = null
     private var loadedName: String? = null
+    private var modelPkg: String? = null
     private var popup: View? = null
     private lateinit var root: FrameLayout
     private lateinit var trainView: TrainView
@@ -183,7 +184,14 @@ class TrainActivity : Activity() {
             artifactCode -> {
                 val id = data?.getStringExtra(ArtifactsActivity.EXTRA_ID) ?: return
                 val b = ArtifactRender.decode(ArtifactStore.imageFile(this, id), 2600)
-                if (b == null) toast("Não consegui abrir o print") else showBitmap(b)
+                if (b == null) {
+                    toast("Não consegui abrir o print")
+                } else {
+                    // O print da câmera sabe de qual app veio: o modelo passa a valer só nesse app.
+                    val p = ArtifactStore.meta(this, id)?.optString("pkg") ?: ""
+                    if (p.isNotEmpty()) modelPkg = p
+                    showBitmap(b)
+                }
             }
             createCode -> {
                 val uri = data?.data ?: return
@@ -375,6 +383,7 @@ class TrainActivity : Activity() {
                 val t = list[which]
                 dismissPopup()
                 loadedName = t.name
+                modelPkg = t.pkg
                 trainView.rects.clear()
                 for ((f, r) in t.fields) trainView.rects[f] = RectF(r)
                 hint.visibility = View.GONE
@@ -406,6 +415,7 @@ class TrainActivity : Activity() {
             builder.setNeutralButton("Apagar modelo salvo") { _, _ ->
                 TemplateStore.delete(this, name)
                 loadedName = null
+                modelPkg = null
                 dismissPopup()
                 trainView.rects.clear()
                 trainView.invalidate()
@@ -477,7 +487,7 @@ class TrainActivity : Activity() {
     private fun askSave(marked: Map<Field, RectF>, reading: TemplateReader.Reading?) {
         AlertDialog.Builder(this)
             .setTitle("O que o app leu")
-            .setMessage(report(marked, reading))
+            .setMessage("Vale para: " + (modelPkg ?: "qualquer app") + "\n\n" + report(marked, reading))
             .setPositiveButton("Salvar") { _, _ -> askName(marked) }
             .setNegativeButton("Voltar", null)
             .show()
@@ -518,7 +528,7 @@ class TrainActivity : Activity() {
 
     // Guarda os retângulos e uma cópia da imagem dentro do app (não some se apagar da galeria).
     private fun persist(marked: Map<Field, RectF>, name: String) {
-        TemplateStore.save(this, Template(name, LinkedHashMap(marked)))
+        TemplateStore.save(this, Template(name, LinkedHashMap(marked), modelPkg))
         val b = bitmap
         if (b != null) TemplateStore.saveImage(this, name, b)
         loadedName = name

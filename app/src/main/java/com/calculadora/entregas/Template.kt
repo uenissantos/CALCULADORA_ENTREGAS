@@ -25,7 +25,8 @@ enum class Field(val label: String, val short: String) {
 }
 
 // Retângulos em proporção da tela (0..1), por isso valem em qualquer resolução.
-data class Template(val name: String, val fields: Map<Field, RectF>)
+// pkg = app de onde veio o print de treino (quando veio dos Artefatos). Com pkg, o modelo só vale nesse app.
+data class Template(val name: String, val fields: Map<Field, RectF>, val pkg: String? = null)
 
 // Palavra lida pelo OCR, com a posição em pixels.
 data class OcrWord(
@@ -38,6 +39,9 @@ data class OcrWord(
 )
 
 object TemplateStore {
+    // Sobe a cada mudança nos modelos, para o leitor recarregar a lista.
+    @Volatile
+    var version = 0
     private fun prefs(c: Context) = c.getSharedPreferences("templates", Context.MODE_PRIVATE)
 
     fun hasAny(c: Context): Boolean = prefs(c).all.isNotEmpty()
@@ -59,11 +63,13 @@ object TemplateStore {
             a.put(r.bottom.toDouble())
             o.put(f.name, a)
         }
+        if (t.pkg != null) o.put("pkg", t.pkg)
         return o
     }
 
     fun save(c: Context, t: Template) {
         prefs(c).edit().putString(t.name, fieldsJson(t).toString()).apply()
+        version++
     }
 
     fun exists(c: Context, name: String): Boolean = prefs(c).contains(name)
@@ -71,6 +77,7 @@ object TemplateStore {
     fun delete(c: Context, name: String) {
         prefs(c).edit().remove(name).apply()
         imageFile(c, name).delete()
+        version++
     }
 
     // ---------- Imagem de treino guardada dentro do app ----------
@@ -155,6 +162,7 @@ object TemplateStore {
             } catch (_: Exception) {
             }
         }
+        version++
         return count
     }
 
@@ -186,7 +194,8 @@ object TemplateStore {
                     )
                 }
             }
-            if (map.isEmpty()) null else Template(name, map)
+            val pkg: String? = o.optString("pkg", "").ifEmpty { null }
+            if (map.isEmpty()) null else Template(name, map, pkg)
         } catch (_: Exception) {
             null
         }
@@ -197,7 +206,6 @@ object TemplateReader {
     class Reading(val offer: OfferParser.ParsedOffer?, val raw: Map<Field, String>)
 
     private val moneyDecimal = Regex("""(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2}|\d+\.\d{2})(?!\d)""")
-    private val moneyInteger = Regex("""R\$\s*(\d+)""", RegexOption.IGNORE_CASE)
     private val kmRegex = Regex("""(\d+(?:[.,]\d+)?)\s*(km|m)?(?![a-zA-Z])""", RegexOption.IGNORE_CASE)
     private val hoursRegex = Regex("""(\d+)\s*h""", RegexOption.IGNORE_CASE)
     private val minutesRegex = Regex("""(\d+)\s*min""", RegexOption.IGNORE_CASE)
@@ -253,7 +261,8 @@ object TemplateReader {
             val v = if (g.contains(',')) g.replace(".", "").replace(',', '.') else g
             return v.toDoubleOrNull()
         }
-        return moneyInteger.find(s)?.groupValues?.get(1)?.toDoubleOrNull()
+        // Sem centavos (ex.: "12") não vale: evita pegar número solto de outra tela.
+        return null
     }
 
     fun parseKm(text: String): Double? {

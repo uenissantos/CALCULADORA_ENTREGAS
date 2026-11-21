@@ -87,7 +87,7 @@ object ArtifactStore {
     }
 
     // Salva o print e a leitura juntos. O JPEG é comprimido na hora; a gravação em arquivo vai em segundo plano.
-    fun save(c: Context, bmp: Bitmap, kind: String, status: String, words: List<OcrWord>?, models: JSONArray?): String {
+    fun save(c: Context, bmp: Bitmap, kind: String, status: String, words: List<OcrWord>?, models: JSONArray?, pkg: String? = null): String {
         val id = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         val bos = ByteArrayOutputStream()
         bmp.compress(Bitmap.CompressFormat.JPEG, 88, bos)
@@ -98,6 +98,7 @@ object ArtifactStore {
         meta.put("time", System.currentTimeMillis())
         meta.put("kind", kind)
         meta.put("status", status)
+        meta.put("pkg", pkg ?: "")
         meta.put("w", bmp.width)
         meta.put("h", bmp.height)
         val lines = JSONArray()
@@ -186,6 +187,8 @@ object ArtifactStore {
         sb.append("Hora: ").append(timeText(meta.optLong("time"))).append('\n')
         sb.append("Tipo: ").append(kindLabel(meta.optString("kind"))).append('\n')
         sb.append("Resultado: ").append(meta.optString("status")).append('\n')
+        val pkgName = meta.optString("pkg")
+        if (pkgName.isNotEmpty()) sb.append("App na tela: ").append(pkgName).append('\n')
         sb.append("Tamanho do print: ").append(meta.optInt("w")).append("x").append(meta.optInt("h")).append('\n')
 
         val models = meta.optJSONArray("modelos")

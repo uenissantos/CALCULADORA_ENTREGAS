@@ -2,6 +2,7 @@ package com.calculadora.entregas
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Build
@@ -43,6 +44,40 @@ class AccessibilityReader : AccessibilityService() {
 
     @Volatile
     private var enabled = false
+    private var currentPkg: String? = null
+    private var modelsVersion = -1
+    private var modelsCache: List<Template> = emptyList()
+
+    // Telas que nunca são corrida: menu/tela inicial do celular e barra do sistema.
+    private val ignoredPackages: Set<String> by lazy {
+        val set = hashSetOf(
+            "com.android.systemui",
+            "com.sec.android.app.launcher",
+            "com.google.android.apps.nexuslauncher",
+            "com.android.launcher3",
+            "com.miui.home",
+            "com.motorola.launcher3"
+        )
+        try {
+            val i = Intent(Intent.ACTION_MAIN)
+            i.addCategory(Intent.CATEGORY_HOME)
+            for (ri in packageManager.queryIntentActivities(i, 0)) set.add(ri.activityInfo.packageName)
+        } catch (_: Exception) {
+        }
+        set
+    }
+
+    private fun allModels(): List<Template> {
+        if (modelsVersion != TemplateStore.version) {
+            modelsCache = TemplateStore.all(this)
+            modelsVersion = TemplateStore.version
+        }
+        return modelsCache
+    }
+
+    // Modelos que valem para o app da tela: os ligados a ele e os sem app (imagem da galeria).
+    private fun modelsFor(pkg: String?): List<Template> =
+        allModels().filter { it.pkg == null || it.pkg == pkg }
     private var scanPending = false
     private var lastScanAt = 0L
     private var rescan = false
@@ -138,7 +173,8 @@ class AccessibilityReader : AccessibilityService() {
             toast("Print exige Android 11 ou mais novo")
             return
         }
-        ui?.setHiddenForCapture(true)
+        // Print real: esconde só o botão; o card que estiver na tela sai no print.
+        ui?.setHiddenForCapture(true, keepCard = true)
         handler.postDelayed({ capture(MODE_SHOT) }, 180)
     }
 
@@ -174,13 +210,23 @@ class AccessibilityReader : AccessibilityService() {
             DebugLog.noRoot++
             return
         }
-        if (root.packageName?.toString() == packageName) {
+        val pkg = root.packageName?.toString()
+        if (pkg == packageName) {
             // A janela ativa é o próprio app: não lê nem sobrescreve o diagnóstico.
             root.recycle()
             return
         }
-        if (TemplateStore.hasAny(this)) {
-            // Com modelo treinado, a leitura é só pelo modelo (por foto).
+        if (pkg != null && pkg in ignoredPackages) {
+            // Menu do celular, tela inicial, barra do sistema: nunca é corrida.
+            root.recycle()
+            lastOfferKey = ""
+            ui?.hideCard()
+            ui?.hideLine()
+            return
+        }
+        currentPkg = pkg
+        if (modelsFor(pkg).isNotEmpty()) {
+            // Há modelo treinado para este app: a leitura é só pelo modelo (por foto).
             root.recycle()
             capture(MODE_AUTO)
             return
@@ -253,24 +299,29 @@ class AccessibilityReader : AccessibilityService() {
         )
     }
 
+    private fun foregroundPackage(): String? {
+        val root = rootInActiveWindow ?: return null
+        val p = root.packageName?.toString()
+        root.recycle()
+        return if (p == packageName) null else p
+    }
+
     private fun capture(mode: Int) {
         if (Build.VERSION.SDK_INT < 30) return
         if (!screenshotInProgress.compareAndSet(false, true)) {
             if (mode != MODE_AUTO) ui?.setHiddenForCapture(false)
             return
         }
+        val pkg: String? = if (mode == MODE_AUTO) currentPkg else foregroundPackage()
+        // Se o nosso card está na tela, os textos dele não podem ser lidos como se fossem da corrida.
+        val cardRect = ui?.cardBounds()
         grabScreen { bmp, err ->
             if (mode != MODE_AUTO) ui?.setHiddenForCapture(false)
             if (bmp == null) {
                 if (mode != MODE_AUTO) toast("Não consegui tirar o print (código $err)")
                 finishCapture()
-            } else if (mode == MODE_SHOT) {
-                ArtifactStore.save(this, bmp, ArtifactStore.KIND_PRINT, "Print real da tela (para treinar)", null, null)
-                bmp.recycle()
-                toast("Print guardado em Artefatos")
-                finishCapture()
             } else {
-                processBitmap(bmp, mode)
+                processBitmap(bmp, mode, pkg, cardRect)
             }
         }
     }
@@ -304,9 +355,12 @@ class AccessibilityReader : AccessibilityService() {
         return changed >= 3
     }
 
-    private fun processBitmap(bmp: Bitmap, mode: Int) {
-        val calc = mode == MODE_CALC
-        if (!calc && !screenChanged(bmp)) {
+    private fun overlapsCard(w: OcrWord, r: Rect): Boolean =
+        r.contains((w.left + w.right) / 2, (w.top + w.bottom) / 2)
+
+    private fun processBitmap(bmp: Bitmap, mode: Int, pkg: String?, cardRect: Rect?) {
+        val manual = mode != MODE_AUTO
+        if (!manual && !screenChanged(bmp)) {
             bmp.recycle()
             finishCapture()
             return
@@ -314,41 +368,58 @@ class AccessibilityReader : AccessibilityService() {
         OcrReader.readFull(bmp) { res ->
             try {
                 if (res == null) {
-                    if (calc) {
+                    if (manual) {
                         toast("Falha ao ler o print. Guardado em Artefatos")
-                        ArtifactStore.save(this, bmp, ArtifactStore.KIND_NOT_FOUND, "Falha na leitura do texto (OCR)", null, null)
+                        ArtifactStore.save(this, bmp, ArtifactStore.KIND_NOT_FOUND, "Falha na leitura do texto (OCR)", null, null, pkg)
                     }
                 } else {
-                    val hasModels = TemplateStore.hasAny(this)
-                    // Com modelo treinado, só vale o modelo. Sem modelo, leitura por texto.
-                    val trained = if (hasModels) readByTemplate(res, bmp.width, bmp.height) else null
-                    val rides = when {
-                        trained != null -> listOf(trained.offer)
-                        hasModels -> emptyList()
-                        else -> OfferParser.findRides(res.lines)
+                    val words = if (cardRect == null) res.words else res.words.filterNot { overlapsCard(it, cardRect) }
+                    val lines = if (cardRect == null) res.lines else res.lines.filterNot {
+                        it.top >= cardRect.top - 6 && it.bottom <= cardRect.bottom + 6
                     }
-                    if (calc) DebugLog.recordManual(res.lines, rides.size) else DebugLog.recordOcr(res.lines, rides.size)
+                    val models = modelsFor(pkg)
+                    // Com modelo treinado para este app, só vale o modelo. Sem modelo, leitura por texto.
+                    val trained = if (models.isNotEmpty()) readByTemplate(models, words, bmp.width, bmp.height) else null
+                    val rides: List<OfferParser.ParsedOffer> = when {
+                        trained != null -> listOf(trained.offer)
+                        models.isNotEmpty() -> emptyList()
+                        else -> OfferParser.findRides(lines)
+                    }
+                    if (mode == MODE_CALC) {
+                        DebugLog.recordManual(lines, rides.size)
+                    } else if (mode == MODE_AUTO) {
+                        DebugLog.recordOcr(lines, rides.size)
+                    }
+                    val shot = mode == MODE_SHOT
                     val y = readingLineY(bmp.height)
                     if (rides.isNotEmpty()) {
-                        if (calc) lastOfferKey = ""
-                        handleRides(rides, y)
-                        if (calc && ArtifactStore.keepSuccess(this)) {
+                        if (mode == MODE_CALC) lastOfferKey = ""
+                        if (!shot) handleRides(rides, y)
+                        if (shot || (mode == MODE_CALC && ArtifactStore.keepSuccess(this))) {
                             val p = OfferParser.pick(rides, y)
                             val source = if (trained != null) "modelo ${trained.name}" else "texto da tela"
-                            val status = if (p != null) {
+                            var status = if (p != null) {
                                 "Leu " + OfferCalculator.money(p.amount) + " | " + OfferCalculator.decimal(p.km) + " km | " + p.minutes.toInt() + " min (" + source + ")"
                             } else {
                                 "Leu uma corrida ($source)"
                             }
-                            ArtifactStore.save(this, bmp, ArtifactStore.KIND_READ, status, res.words, modelReadings(res, bmp.width, bmp.height))
+                            if (shot) status = "Print real. $status"
+                            ArtifactStore.save(this, bmp, ArtifactStore.KIND_READ, status, res.words, modelReadings(models, words, bmp.width, bmp.height), pkg)
+                            if (shot) toast("Print guardado em Artefatos")
                         }
-                    } else if (calc) {
-                        toast("Nenhuma corrida encontrada. Print e leitura guardados em Artefatos")
+                    } else if (manual) {
+                        // Não achou card: o artefato diz isso claramente, com o que foi lido na tela.
+                        val why = if (models.isNotEmpty()) {
+                            "Nenhum card de corrida encontrado pelo modelo treinado"
+                        } else {
+                            "Nenhum card de corrida encontrado nesta tela"
+                        }
                         ArtifactStore.save(
                             this, bmp, ArtifactStore.KIND_NOT_FOUND,
-                            if (hasModels) "Nenhuma corrida encontrada pelo modelo treinado" else "Nenhuma corrida encontrada nesta tela",
-                            res.words, modelReadings(res, bmp.width, bmp.height)
+                            if (shot) "Print real. $why" else why,
+                            res.words, modelReadings(models, words, bmp.width, bmp.height), pkg
                         )
+                        toast(if (shot) "Print guardado em Artefatos. $why" else "$why. Print e leitura guardados em Artefatos")
                     } else {
                         // A oferta saiu da tela: some o card e libera a mesma oferta para o futuro.
                         lastOfferKey = ""
@@ -363,20 +434,20 @@ class AccessibilityReader : AccessibilityService() {
         }
     }
 
-    // Tenta cada modelo treinado; o primeiro que ler valor e KM válidos vale.
-    private fun readByTemplate(res: OcrResult, w: Int, h: Int): Trained? {
-        for (t in TemplateStore.all(this)) {
-            val offer = TemplateReader.read(t, res.words, w, h).offer
+    // Tenta cada modelo do app; o primeiro que ler valor e KM válidos vale.
+    private fun readByTemplate(models: List<Template>, words: List<OcrWord>, w: Int, h: Int): Trained? {
+        for (t in models) {
+            val offer = TemplateReader.read(t, words, w, h).offer
             if (offer != null) return Trained(t.name, offer)
         }
         return null
     }
 
     // O que cada modelo leu e onde procurou, para comparar com o print depois.
-    private fun modelReadings(res: OcrResult, w: Int, h: Int): JSONArray {
+    private fun modelReadings(models: List<Template>, words: List<OcrWord>, w: Int, h: Int): JSONArray {
         val arr = JSONArray()
-        for (t in TemplateStore.all(this)) {
-            val r = TemplateReader.read(t, res.words, w, h)
+        for (t in models) {
+            val r = TemplateReader.read(t, words, w, h)
             val o = JSONObject()
             o.put("nome", t.name)
             o.put("ok", r.offer != null)

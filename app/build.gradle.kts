@@ -11,8 +11,19 @@ android {
         applicationId = "com.calculadora.entregas"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
+        // Sobe a cada build do GitHub Actions; local usa 11.
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 11
         versionName = "1.0.0"
+    }
+
+    // Chave fixa no projeto: todo APK sai com a mesma assinatura e atualiza por cima do anterior.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     compileOptions {

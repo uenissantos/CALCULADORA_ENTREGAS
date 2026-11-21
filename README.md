@@ -2,7 +2,7 @@
 
 App Android que lê o card de uma corrida/entrega que está na tela do celular e mostra, por cima do app de corrida, um card com o cálculo (valor por km, valor por hora e lucro) para ajudar a decidir se a corrida compensa.
 
-Versão atual: **v11**
+Versão atual: **v12**
 
 ## Como funciona
 
@@ -13,7 +13,11 @@ Existem duas formas de o app achar esses dados na tela:
 1. **Leitura por texto**: procura valor, KM e minutos nos textos da tela. Funciona sem treino, mas depende do layout do app de corrida.
 2. **Leitura por modelo treinado**: você marca no print onde fica cada item. Funciona em qualquer app de corrida, porque o app sabe exatamente onde olhar.
 
-**Regra de prioridade:** se existir pelo menos um modelo treinado salvo, **só o modelo vale**. Se o modelo não conseguir ler a tela, o app diz que não achou corrida e não tenta adivinhar pela leitura por texto. Sem nenhum modelo salvo, usa a leitura por texto.
+**Regra de prioridade:** se existir um modelo treinado que vale para o app que está na tela, **só o modelo vale**. Se o modelo não conseguir ler a tela, o app diz que não achou corrida e não tenta adivinhar pela leitura por texto. Sem modelo para aquele app, usa a leitura por texto.
+
+**Modelo ligado ao app:** quando o treino usa um print feito pela **câmera** do botão flutuante, o app sabe de qual aplicativo ele veio e o modelo passa a valer **só nesse aplicativo**. Modelos treinados com imagem da galeria não sabem o app e valem em qualquer tela, com validação mais rígida.
+
+**Telas ignoradas na leitura automática:** o menu e a tela inicial do celular e a barra do sistema nunca são lidos. Os textos do próprio card do app também são ignorados na leitura, para ele não ler a si mesmo.
 
 ## Requisitos
 
@@ -55,7 +59,7 @@ Para trazer o botão de volta, abra o app e toque em **Mostrar botão flutuante*
 
 Na tela principal, toque em **Treinar**.
 
-1. Escolha a imagem: da **galeria** ou dos **prints guardados no app** (Artefatos). Use um print da tela inteira com o card da corrida aparecendo.
+1. Escolha a imagem: da **galeria** ou dos **prints guardados no app** (Artefatos). Use um print da tela inteira com o card da corrida aparecendo. O ideal é usar um print feito pela câmera do botão flutuante, porque assim o modelo fica ligado ao app certo.
 2. Arraste um retângulo sobre um item da imagem. Aparece um flutuante para dizer o que ele é:
    - **Valor** (valor da rota)
    - **KM**: único, ida ou volta
@@ -100,8 +104,8 @@ Os dois são ligados pelo mesmo identificador e pelos números das caixas.
 
 Um artefato é criado quando:
 
-- você usa a **câmera** do botão flutuante (só o print, para treinar);
-- você usa a **calculadora** e o app **não acha corrida** (print + leitura, para entender o motivo);
+- você usa a **câmera** do botão flutuante (print real, para treinar). O app também tenta ler o print e registra o resultado: o que leu, ou **"Nenhum card de corrida encontrado"**. O card do app que estiver na tela sai no print;
+- você usa a **calculadora** e o app **não acha corrida**: o artefato diz "Nenhum card de corrida encontrado" e guarda o print e tudo que foi lido;
 - a opção **Guardar também as leituras certas** está ligada e a calculadora leu uma corrida (print + leitura, para conferir se o valor bate com a tela). Vem desligada.
 
 Ao abrir um artefato:
@@ -111,6 +115,15 @@ Ao abrir um artefato:
 - **Apagar** remove o artefato.
 
 Na lista, **Compartilhar tudo** envia um `.zip` com todos os artefatos e **Apagar tudo** limpa a lista. O app guarda no máximo 150 artefatos e apaga os mais antigos.
+
+## Atualizar sem desinstalar
+
+O projeto traz uma chave de assinatura fixa (`app/debug.keystore`), então todo APK gerado pelo GitHub Actions tem a mesma assinatura e instala **por cima** do anterior, sem conflito de pacote. Sem essa chave fixa, cada build do GitHub saía com uma assinatura nova e o Android recusava a atualização.
+
+- **Suba o arquivo `app/debug.keystore` junto com o projeto.** Sem ele o build não fecha.
+- Na **primeira vez** com essa chave é preciso desinstalar a versão antiga uma última vez. Antes, faça o backup dos modelos no ícone 💾 da tela de treino e restaure depois.
+- Não apague nem troque o `debug.keystore`: se mudar, volta o conflito.
+- O número da versão (`versionCode`) sobe sozinho a cada build do GitHub.
 
 ## Consumo de bateria
 
@@ -126,6 +139,7 @@ Na tela principal há um botão de diagnóstico com o estado da última leitura 
 ## Estrutura do projeto
 
 ```
+app/debug.keystore         chave de assinatura fixa (não apagar)
 app/src/main/java/com/calculadora/entregas/
   MainActivity.kt          tela principal e configurações
   AccessibilityReader.kt   serviço: leitura automática, calculadora e câmera
