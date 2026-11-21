@@ -2,7 +2,7 @@
 
 App Android que lê o card de uma corrida/entrega que está na tela do celular e mostra, por cima do app de corrida, um card com o cálculo (valor por km, valor por hora e lucro) para ajudar a decidir se a corrida compensa.
 
-Versão atual: **v14**
+Versão atual: **v16**
 
 ## Como funciona
 
@@ -65,7 +65,7 @@ Para trazer o botão de volta, abra o app e toque em **Mostrar botão flutuante*
 Abra um artefato e toque em **Enviar para treinamento**:
 
 - **Treinar com a imagem**: abre a tela de treino já com o print do artefato (e o app certo).
-- **Treinar com o texto**: abre a lista dos textos lidos naquele artefato. Escolha a fonte (**texto da tela** ou **texto da foto**), toque em um texto e diga se é Valor, KM (único, coleta, entrega), Tempo (único, coleta, entrega) ou **Âncora**. Toque em **Conferir** para ver o que o app leu e o cálculo, depois **Salvar** e dê um nome. O botão **Salvos** lista e apaga modelos de texto.
+- **Treinar com o texto**: abre a lista dos textos lidos naquele artefato. Escolha a fonte (**texto da tela** ou **texto da foto**), toque em um texto e diga se é Valor, KM (único, coleta, entrega), Tempo (único, coleta, entrega) ou **Âncora**. Quando o tempo e o KM estão na mesma linha, use "Tempo + KM da coleta/entrega (mesma linha)" para marcar os dois de uma vez; se a linha tiver coleta e entrega juntas, o app pergunta qual trecho ou usa o primeiro para a coleta e o segundo para a entrega. Toque em **Conferir** para ver o que o app leu e o cálculo, depois **Salvar** e dê um nome. O botão **Salvos** lista e apaga modelos de texto.
 
 Se o app de corrida bloquear o print, o artefato guarda uma **tela preta** junto com os textos da tela, e você treina só pelo texto.
 
@@ -144,7 +144,7 @@ O projeto traz uma chave de assinatura fixa (`app/debug.keystore`), então todo 
 
 - **Desligado**: o serviço de acessibilidade não recebe nenhum evento do sistema. Fica apenas o botão na tela, com consumo praticamente zero.
 - Os botões **calculadora** e **câmera** gastam bateria só no momento do toque.
-- **Ligado**: os eventos são agrupados e a leitura roda no máximo uma vez a cada 0,9 segundo. Se a tela não mudou desde a leitura anterior, o app pula o OCR.
+- **Ligado**: os eventos são agrupados e a leitura roda no máximo uma vez a cada 2 segundos e não roda com a tela apagada. O OCR só roda se uma parte grande da tela mudou (um card aparecendo); mapa mexendo não dispara. Com treino de texto da tela, não há print nem OCR.
 - Quando você terminar de trabalhar, toque no **X** do botão flutuante para remover o botão e desligar tudo.
 
 ## Diagnóstico

@@ -151,12 +151,14 @@ object TextReader {
         src: String,
         items: List<OfferParser.TextItem>,
         sel: Map<Field, Int>,
-        anchorLines: Collection<Int>
+        anchorLines: Collection<Int>,
+        occ: Map<Field, Int> = emptyMap()
     ): Pair<TextModel?, String?> {
         val vIdx = sel[Field.VALOR] ?: return Pair(null, "Marque o valor da rota")
         val picked = HashMap<Field, Snip>()
         for ((f, idx) in sel) {
-            val first = snippets(f, items[idx].text).firstOrNull()
+            // Vários trechos iguais na mesma linha (ex.: coleta e entrega juntas): occ diz qual.
+            val first = snippets(f, items[idx].text).getOrNull(occ[f] ?: 0)
                 ?: return Pair(null, "O texto marcado como ${f.label} não tem esse dado")
             picked[f] = Snip(key(idx, first.first), first.second, shapeOf(first.second))
         }

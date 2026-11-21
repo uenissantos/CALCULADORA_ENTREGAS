@@ -27,8 +27,8 @@ class AccessibilityReader : AccessibilityService() {
         private const val MODE_CALC = 1   // botão calculadora: força a leitura agora
         private const val MODE_SHOT = 2   // botão câmera: print real guardado no app
 
-        private const val DEBOUNCE_MS = 250L
-        private const val MIN_GAP_MS = 900L
+        private const val DEBOUNCE_MS = 400L
+        private const val MIN_GAP_MS = 2000L
 
         private const val THUMB_W = 54
         private const val THUMB_H = 108
@@ -42,6 +42,7 @@ class AccessibilityReader : AccessibilityService() {
     private var lastOfferKey = ""
     private var lastThumb: IntArray? = null
     private val screenshotInProgress = AtomicBoolean(false)
+    private val power by lazy { getSystemService(POWER_SERVICE) as android.os.PowerManager }
 
     @Volatile
     private var enabled = false
@@ -199,6 +200,8 @@ class AccessibilityReader : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !enabled) return
         if (event.packageName?.toString() == packageName) return
+        // Tela apagada: não lê nada.
+        if (!power.isInteractive) return
         DebugLog.events++
         if (screenshotInProgress.get()) rescan = true
         if (scanPending) return
@@ -213,6 +216,7 @@ class AccessibilityReader : AccessibilityService() {
     }
 
     private fun scanScreen() {
+        if (!power.isInteractive) return
         val root = rootInActiveWindow
         if (root == null) {
             DebugLog.noRoot++
@@ -406,7 +410,8 @@ class AccessibilityReader : AccessibilityService() {
                 abs((a and 255) - (b and 255))
             if (d > 60) changed++
         }
-        return changed >= 3
+        // Só conta mudança grande (um card aparecendo); mapa mexendo não dispara leitura.
+        return changed >= px.size / 50
     }
 
     private fun overlapsCard(w: OcrWord, r: Rect): Boolean =

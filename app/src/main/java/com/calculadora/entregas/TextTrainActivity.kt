@@ -26,6 +26,7 @@ class TextTrainActivity : Activity() {
     private var src = TextSrc.ACC
     private var items: List<OfferParser.TextItem> = emptyList()
     private val sel = LinkedHashMap<Field, Int>()
+    private val occ = LinkedHashMap<Field, Int>()
     private val anchors = LinkedHashSet<Int>()
     private lateinit var list: ListView
     private lateinit var srcBtn: Button
@@ -114,6 +115,7 @@ class TextTrainActivity : Activity() {
         src = if (src == TextSrc.ACC) TextSrc.OCR else TextSrc.ACC
         items = if (src == TextSrc.ACC) accItems else ocrItems
         sel.clear()
+        occ.clear()
         anchors.clear()
         updateSourceButton()
         (list.adapter as BaseAdapter).notifyDataSetChanged()
@@ -121,6 +123,7 @@ class TextTrainActivity : Activity() {
 
     private fun clearAll() {
         sel.clear()
+        occ.clear()
         anchors.clear()
         (list.adapter as BaseAdapter).notifyDataSetChanged()
     }
@@ -132,7 +135,32 @@ class TextTrainActivity : Activity() {
         return tags.joinToString(" + ")
     }
 
-    private fun assign(f: Field, index: Int) {
+    // Se a linha tem mais de um trecho do mesmo tipo (ex.: dois KM), pergunta qual.
+    private fun assignAsk(f: Field, index: Int) {
+        val sn = TextReader.snippets(f, items[index].text)
+        if (sn.size <= 1) {
+            assign(f, index, 0)
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(f.label + ": qual deles?")
+            .setItems(sn.map { it.second }.toTypedArray()) { _, which -> assign(f, index, which) }
+            .show()
+    }
+
+    // Tempo e KM na mesma linha: marca os dois de uma vez. leg 0 = primeiro trecho, 1 = segundo.
+    private fun assignPair(kmF: Field, minF: Field, index: Int, leg: Int) {
+        val k = TextReader.snippets(kmF, items[index].text).size
+        val t = TextReader.snippets(minF, items[index].text).size
+        if (k == 0 || t == 0) {
+            toast("Esse texto não tem tempo e KM juntos")
+            return
+        }
+        assign(kmF, index, if (k > 1) leg else 0)
+        assign(minF, index, if (t > 1) leg else 0)
+    }
+
+    private fun assign(f: Field, index: Int, o: Int) {
         if (TextReader.snippets(f, items[index].text).isEmpty()) {
             val what = when (f) {
                 Field.VALOR -> "um valor (ex.: R\$7,21)"
@@ -143,6 +171,7 @@ class TextTrainActivity : Activity() {
             return
         }
         sel[f] = index
+        occ[f] = o
         (list.adapter as BaseAdapter).notifyDataSetChanged()
     }
 
@@ -153,20 +182,27 @@ class TextTrainActivity : Activity() {
             labels.add(label)
             actions.add(action)
         }
-        add("Valor") { assign(Field.VALOR, index) }
-        add("KM único") { assign(Field.KM_UNICO, index) }
-        add("KM coleta") { assign(Field.KM_IDA, index) }
-        add("KM entrega") { assign(Field.KM_VOLTA, index) }
-        add("Tempo único") { assign(Field.MIN_UNICO, index) }
-        add("Tempo coleta") { assign(Field.MIN_IDA, index) }
-        add("Tempo entrega") { assign(Field.MIN_VOLTA, index) }
+        add("Valor") { assign(Field.VALOR, index, 0) }
+        add("Tempo + KM únicos (mesma linha)") { assignPair(Field.KM_UNICO, Field.MIN_UNICO, index, 0) }
+        add("Tempo + KM da coleta (mesma linha)") { assignPair(Field.KM_IDA, Field.MIN_IDA, index, 0) }
+        add("Tempo + KM da entrega (mesma linha)") { assignPair(Field.KM_VOLTA, Field.MIN_VOLTA, index, 1) }
+        add("KM único") { assignAsk(Field.KM_UNICO, index) }
+        add("KM coleta") { assignAsk(Field.KM_IDA, index) }
+        add("KM entrega") { assignAsk(Field.KM_VOLTA, index) }
+        add("Tempo único") { assignAsk(Field.MIN_UNICO, index) }
+        add("Tempo coleta") { assignAsk(Field.MIN_IDA, index) }
+        add("Tempo entrega") { assignAsk(Field.MIN_VOLTA, index) }
         add(if (anchors.contains(index)) "Tirar âncora" else "Âncora (texto fixo)") {
             if (!anchors.remove(index)) anchors.add(index)
             (list.adapter as BaseAdapter).notifyDataSetChanged()
         }
         if (tagsOf(index).isNotEmpty()) {
             add("Limpar marcações deste texto") {
-                sel.entries.removeAll { it.value == index }
+                val gone = sel.entries.filter { it.value == index }.map { it.key }
+                for (f in gone) {
+                    sel.remove(f)
+                    occ.remove(f)
+                }
                 anchors.remove(index)
                 (list.adapter as BaseAdapter).notifyDataSetChanged()
             }
@@ -186,7 +222,7 @@ class TextTrainActivity : Activity() {
             toast("Marque o KM (único, ou coleta e entrega)")
             return
         }
-        val (model, error) = TextReader.train("teste", pkg, src, items, LinkedHashMap(sel), LinkedHashSet(anchors))
+        val (model, error) = TextReader.train("teste", pkg, src, items, LinkedHashMap(sel), LinkedHashSet(anchors), LinkedHashMap(occ))
         if (model == null) {
             toast(error ?: "Não consegui montar o modelo")
             return
