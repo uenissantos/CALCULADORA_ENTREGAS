@@ -87,7 +87,7 @@ object ArtifactStore {
     }
 
     // Salva o print e a leitura juntos. O JPEG é comprimido na hora; a gravação em arquivo vai em segundo plano.
-    fun save(c: Context, bmp: Bitmap, kind: String, status: String, words: List<OcrWord>?, models: JSONArray?, pkg: String? = null): String {
+    fun save(c: Context, bmp: Bitmap, kind: String, status: String, words: List<OcrWord>?, models: JSONArray?, pkg: String? = null, acc: List<OfferParser.TextItem>? = null): String {
         val id = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
         val bos = ByteArrayOutputStream()
         bmp.compress(Bitmap.CompressFormat.JPEG, 88, bos)
@@ -117,6 +117,21 @@ object ArtifactStore {
             }
         }
         meta.put("lines", lines)
+        // Textos que o app de corrida entrega pela acessibilidade (existem mesmo quando o print é bloqueado).
+        val accArr = JSONArray()
+        if (acc != null) {
+            var n = 1
+            for (item in acc.sortedBy { x -> x.top }.take(200)) {
+                val o = JSONObject()
+                o.put("n", n)
+                o.put("text", item.text.take(300))
+                o.put("t", item.top)
+                o.put("b", item.bottom)
+                accArr.put(o)
+                n++
+            }
+        }
+        meta.put("acc", accArr)
         if (models != null) meta.put("modelos", models)
 
         val app = c.applicationContext
@@ -152,7 +167,7 @@ object ArtifactStore {
                         o.optLong("time"),
                         o.optString("kind"),
                         o.optString("status"),
-                        o.optJSONArray("lines")?.length() ?: 0
+                        (o.optJSONArray("lines")?.length() ?: 0) + (o.optJSONArray("acc")?.length() ?: 0)
                     )
                 )
             } catch (_: Exception) {
@@ -222,7 +237,32 @@ object ArtifactStore {
                     .append(o.optString("text").replace('\n', ' ')).append('\n')
             }
         }
+        val acc = meta.optJSONArray("acc")
+        sb.append("\nTEXTOS DA TELA (acessibilidade, funciona mesmo se o app bloquear print):\n")
+        if (acc == null || acc.length() == 0) {
+            sb.append("(nenhum texto entregue pelo app)\n")
+        } else {
+            for (i in 0 until acc.length()) {
+                val o = acc.getJSONObject(i)
+                sb.append('[').append(o.optInt("n")).append("] (y ")
+                    .append(o.optInt("t")).append("-").append(o.optInt("b")).append("): ")
+                    .append(o.optString("text").replace('\n', ' ')).append('\n')
+            }
+        }
         return sb.toString()
+    }
+
+    // Lista de textos de um artefato (fonte TextSrc.ACC ou TextSrc.OCR), de cima para baixo.
+    fun textItems(meta: JSONObject, src: String): List<OfferParser.TextItem> {
+        val arr = meta.optJSONArray(if (src == TextSrc.ACC) "acc" else "lines") ?: return emptyList()
+        val out = ArrayList<OfferParser.TextItem>()
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            val text = o.optString("text")
+            if (text.isBlank()) continue
+            out.add(OfferParser.TextItem(text, o.optInt("t"), o.optInt("b")))
+        }
+        return out.sortedBy { it.top }
     }
 }
 

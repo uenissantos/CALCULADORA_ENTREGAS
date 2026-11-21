@@ -136,6 +136,10 @@ class TrainActivity : Activity() {
         place(circle("✓", Color.rgb(0, 150, 80)) { confirm() }, 60, Gravity.BOTTOM or Gravity.END, 0, 0, 24, 56)
 
         setContentView(root)
+
+        // Veio do botão "Enviar para treinamento" de um artefato: já abre com o print dele.
+        val fromArtifact = intent.getStringExtra(ArtifactsActivity.EXTRA_ID)
+        if (fromArtifact != null) useArtifact(fromArtifact)
     }
 
     private fun pickSource() {
@@ -183,15 +187,7 @@ class TrainActivity : Activity() {
             }
             artifactCode -> {
                 val id = data?.getStringExtra(ArtifactsActivity.EXTRA_ID) ?: return
-                val b = ArtifactRender.decode(ArtifactStore.imageFile(this, id), 2600)
-                if (b == null) {
-                    toast("Não consegui abrir o print")
-                } else {
-                    // O print da câmera sabe de qual app veio: o modelo passa a valer só nesse app.
-                    val p = ArtifactStore.meta(this, id)?.optString("pkg") ?: ""
-                    if (p.isNotEmpty()) modelPkg = p
-                    showBitmap(b)
-                }
+                useArtifact(id)
             }
             createCode -> {
                 val uri = data?.data ?: return
@@ -201,6 +197,18 @@ class TrainActivity : Activity() {
                 val uri = data?.data ?: return
                 doRestore(uri)
             }
+        }
+    }
+
+    // Usa o print de um artefato no treino. Se veio da câmera, o modelo passa a valer só no app dele.
+    private fun useArtifact(id: String) {
+        val b = ArtifactRender.decode(ArtifactStore.imageFile(this, id), 2600)
+        if (b == null) {
+            toast("Não consegui abrir o print")
+        } else {
+            val p = ArtifactStore.meta(this, id)?.optString("pkg") ?: ""
+            if (p.isNotEmpty()) modelPkg = p
+            showBitmap(b)
         }
     }
 
@@ -339,14 +347,14 @@ class TrainActivity : Activity() {
             }
             1 -> {
                 opt("Único", fieldColor(Field.KM_UNICO)) { assign(rect, Field.KM_UNICO, existing) }
-                opt("Ida", fieldColor(Field.KM_IDA)) { assign(rect, Field.KM_IDA, existing) }
-                opt("Volta", fieldColor(Field.KM_VOLTA)) { assign(rect, Field.KM_VOLTA, existing) }
+                opt("Coleta", fieldColor(Field.KM_IDA)) { assign(rect, Field.KM_IDA, existing) }
+                opt("Entrega", fieldColor(Field.KM_VOLTA)) { assign(rect, Field.KM_VOLTA, existing) }
                 opt("←", gray) { showLevel(0, rect, existing) }
             }
             else -> {
                 opt("Único", fieldColor(Field.MIN_UNICO)) { assign(rect, Field.MIN_UNICO, existing) }
-                opt("Ida", fieldColor(Field.MIN_IDA)) { assign(rect, Field.MIN_IDA, existing) }
-                opt("Volta", fieldColor(Field.MIN_VOLTA)) { assign(rect, Field.MIN_VOLTA, existing) }
+                opt("Coleta", fieldColor(Field.MIN_IDA)) { assign(rect, Field.MIN_IDA, existing) }
+                opt("Entrega", fieldColor(Field.MIN_VOLTA)) { assign(rect, Field.MIN_VOLTA, existing) }
                 opt("←", gray) { showLevel(0, rect, existing) }
             }
         }
@@ -433,7 +441,7 @@ class TrainActivity : Activity() {
             return
         }
         if (!rects.containsKey(Field.KM_UNICO) && !rects.containsKey(Field.KM_IDA) && !rects.containsKey(Field.KM_VOLTA)) {
-            toast("Marque o KM (único, ou ida e volta)")
+            toast("Marque o KM (único, ou coleta e entrega)")
             return
         }
         val marked = LinkedHashMap(rects)

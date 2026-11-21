@@ -248,6 +248,12 @@ class ArtifactDetailActivity : Activity() {
         sv.addView(report)
         root.addView(sv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
+        val train = Button(this)
+        train.text = "Enviar para treinamento"
+        train.isAllCaps = false
+        train.setOnClickListener { sendToTraining() }
+        root.addView(train)
+
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
         val share = Button(this)
@@ -273,6 +279,28 @@ class ArtifactDetailActivity : Activity() {
         root.addView(row)
 
         setContentView(root)
+    }
+
+    // Treina com a imagem (marcar áreas no print) ou com o texto (escolher os textos lidos).
+    private fun sendToTraining() {
+        val m = meta ?: return
+        val hasText = ArtifactStore.textItems(m, TextSrc.ACC).isNotEmpty() || ArtifactStore.textItems(m, TextSrc.OCR).isNotEmpty()
+        AlertDialog.Builder(this)
+            .setTitle("Enviar para treinamento")
+            .setItems(arrayOf("Treinar com a imagem (marcar áreas no print)", "Treinar com o texto (escolher os textos lidos)")) { _, which ->
+                if (which == 0) {
+                    val i = Intent(this, TrainActivity::class.java)
+                    i.putExtra(ArtifactsActivity.EXTRA_ID, id)
+                    startActivity(i)
+                } else if (!hasText) {
+                    Toast.makeText(this, "Esse artefato não tem nenhum texto lido", Toast.LENGTH_LONG).show()
+                } else {
+                    val i = Intent(this, TextTrainActivity::class.java)
+                    i.putExtra(ArtifactsActivity.EXTRA_ID, id)
+                    startActivity(i)
+                }
+            }
+            .show()
     }
 
     private fun toggleBoxes() {

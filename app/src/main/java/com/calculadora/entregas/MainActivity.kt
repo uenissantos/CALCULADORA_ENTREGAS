@@ -59,7 +59,7 @@ class MainActivity : Activity() {
         add(titleView)
 
         val help = TextView(this)
-        help.text = "1) Ative a acessibilidade.\n2) Ajuste os valores e salve.\n3) Toque no botão flutuante: abrem 4 ícones em volta dele. Ligar/desligar a leitura automática, calculadora (lê a tela na hora e mostra o card), câmera (tira um print real e guarda em Artefatos para treinar) e X (tira o botão da tela; para trazer de volta, use Mostrar botão flutuante aqui)."
+        help.text = "1) Ative a acessibilidade.\n2) Ajuste os valores e salve.\n3) O app só gera card de um app de corrida depois de treinado. Use a câmera do botão flutuante, abra o artefato e toque em Enviar para treinamento (pela imagem, pelo texto, ou os dois).\n4) Botão flutuante: ligar/desligar a leitura automática, calculadora (lê a tela na hora), câmera (print real guardado em Artefatos, mesmo se o app bloquear print) e X (tira o botão da tela; para trazer de volta, use Mostrar botão flutuante aqui)."
         help.textSize = 14f
         add(help)
 

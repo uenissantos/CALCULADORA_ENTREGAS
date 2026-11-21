@@ -17,11 +17,11 @@ import java.util.zip.ZipOutputStream
 enum class Field(val label: String, val short: String) {
     VALOR("Valor da rota", "VALOR"),
     KM_UNICO("KM único", "KM ÚNICO"),
-    KM_IDA("KM ida", "KM IDA"),
-    KM_VOLTA("KM volta", "KM VOLTA"),
+    KM_IDA("KM coleta", "KM COLETA"),
+    KM_VOLTA("KM entrega", "KM ENTREGA"),
     MIN_UNICO("Tempo único", "MIN ÚNICO"),
-    MIN_IDA("Tempo ida", "MIN IDA"),
-    MIN_VOLTA("Tempo volta", "MIN VOLTA")
+    MIN_IDA("Tempo coleta", "MIN COLETA"),
+    MIN_VOLTA("Tempo entrega", "MIN ENTREGA")
 }
 
 // Retângulos em proporção da tela (0..1), por isso valem em qualquer resolução.
@@ -44,7 +44,7 @@ object TemplateStore {
     var version = 0
     private fun prefs(c: Context) = c.getSharedPreferences("templates", Context.MODE_PRIVATE)
 
-    fun hasAny(c: Context): Boolean = prefs(c).all.isNotEmpty()
+    fun hasAny(c: Context): Boolean = prefs(c).all.isNotEmpty() || TextStore.count(c) > 0
 
     // Nome automático para um modelo novo: "Modelo 1", "Modelo 2"...
     fun nextName(c: Context): String {
@@ -110,6 +110,7 @@ object TemplateStore {
 
     fun backupTo(c: Context, out: OutputStream): Int {
         val list = all(c)
+        var textCount = 0
         ZipOutputStream(out.buffered()).use { z ->
             var i = 1
             for (t in list) {
@@ -129,8 +130,20 @@ object TemplateStore {
                 }
                 i++
             }
+            // Modelos de texto: só regras, não têm imagem.
+            for (m in TextStore.all(c)) {
+                val meta = JSONObject()
+                meta.put("tipo", "texto")
+                meta.put("name", m.name)
+                meta.put("modelo", TextStore.toJson(m))
+                z.putNextEntry(ZipEntry("texto_$i.json"))
+                z.write(meta.toString().toByteArray(Charsets.UTF_8))
+                z.closeEntry()
+                i++
+                textCount++
+            }
         }
-        return list.size
+        return list.size + textCount
     }
 
     fun restoreFrom(c: Context, input: InputStream): Int {
@@ -154,6 +167,11 @@ object TemplateStore {
             try {
                 val meta = JSONObject(text)
                 val name = meta.getString("name")
+                if (meta.optString("tipo") == "texto") {
+                    TextStore.saveRaw(c, name, meta.getJSONObject("modelo"))
+                    count++
+                    continue
+                }
                 val campos = meta.getJSONObject("campos")
                 prefs(c).edit().putString(name, campos.toString()).apply()
                 val bytes = images[meta.optString("imagem")]
@@ -240,7 +258,7 @@ object TemplateReader {
         val minIda = raw[Field.MIN_IDA]?.let { parseMinutes(it) }
         val minVolta = raw[Field.MIN_VOLTA]?.let { parseMinutes(it) }
 
-        // "Único" já vem somado no card; sem ele, soma ida + volta.
+        // "Único" já vem somado no card; sem ele, soma coleta + entrega.
         val km = kmUnico ?: ((kmIda ?: 0.0) + (kmVolta ?: 0.0))
         val minutes = minUnico ?: ((minIda ?: 0.0) + (minVolta ?: 0.0))
 

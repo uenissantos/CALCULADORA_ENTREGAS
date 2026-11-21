@@ -2,22 +2,27 @@
 
 App Android que lê o card de uma corrida/entrega que está na tela do celular e mostra, por cima do app de corrida, um card com o cálculo (valor por km, valor por hora e lucro) para ajudar a decidir se a corrida compensa.
 
-Versão atual: **v12**
+Versão atual: **v14**
 
 ## Como funciona
 
-O app usa um serviço de acessibilidade para tirar uma foto da tela, lê os textos da foto (OCR no próprio aparelho, sem internet) e calcula em cima do **valor da rota**, dos **KM** e do **tempo**. O resultado aparece em um card flutuante, que some sozinho depois de alguns segundos.
+O app lê o card de uma corrida/entrega que está na tela e mostra, por cima do app de corrida, um card flutuante com o cálculo (valor por km, valor por hora e lucro).
 
-Existem duas formas de o app achar esses dados na tela:
+**O app não gera card sozinho.** Ele só lê depois de **treinado** para aquele app. Sem treino, nenhum card aparece (e o botão calculadora guarda um artefato dizendo que não há treino, para você treinar).
 
-1. **Leitura por texto**: procura valor, KM e minutos nos textos da tela. Funciona sem treino, mas depende do layout do app de corrida.
-2. **Leitura por modelo treinado**: você marca no print onde fica cada item. Funciona em qualquer app de corrida, porque o app sabe exatamente onde olhar.
+Existem três tipos de treino, e você pode usar um, outro ou todos para o mesmo app:
 
-**Regra de prioridade:** se existir um modelo treinado que vale para o app que está na tela, **só o modelo vale**. Se o modelo não conseguir ler a tela, o app diz que não achou corrida e não tenta adivinhar pela leitura por texto. Sem modelo para aquele app, usa a leitura por texto.
+1. **Imagem**: você marca no print onde fica cada item. Depende da posição na tela.
+2. **Texto da tela**: usa os textos que o app de corrida entrega pela acessibilidade. Não precisa de print, então funciona **mesmo em apps que bloqueiam captura de tela**.
+3. **Texto da foto**: usa os textos lidos do print por OCR. Não depende da posição: vale mesmo se o card mudar de lugar.
 
-**Modelo ligado ao app:** quando o treino usa um print feito pela **câmera** do botão flutuante, o app sabe de qual aplicativo ele veio e o modelo passa a valer **só nesse aplicativo**. Modelos treinados com imagem da galeria não sabem o app e valem em qualquer tela, com validação mais rígida.
+Os modelos de texto guardam o **formato** do que foi marcado (por exemplo `R$#,##`, `# km`, `# min`) e a ordem em relação ao valor, não a posição na tela. Opcionalmente você marca **âncoras** (textos fixos do card, como o nome do botão): se houver âncora, o card só vale quando ela estiver na tela.
 
-**Telas ignoradas na leitura automática:** o menu e a tela inicial do celular e a barra do sistema nunca são lidos. Os textos do próprio card do app também são ignorados na leitura, para ele não ler a si mesmo.
+Quando mais de um treino lê a mesma corrida, o resultado é o mesmo valor, então o card não pisca com valores diferentes. A ordem de tentativa é: texto da tela, texto da foto, imagem.
+
+**Modelo ligado ao app:** quando o treino parte de um artefato feito pela câmera do botão flutuante, o app sabe de qual aplicativo ele veio e o modelo passa a valer **só nesse aplicativo**. Modelos treinados com imagem da galeria valem em qualquer tela.
+
+**Telas ignoradas na leitura automática:** o menu e a tela inicial do celular e a barra do sistema nunca são lidos. Os textos do próprio card do app também são ignorados na leitura.
 
 ## Requisitos
 
@@ -55,16 +60,26 @@ O botão principal pode ser arrastado pela tela. Ao tocar nele, quatro ícones a
 
 Para trazer o botão de volta, abra o app e toque em **Mostrar botão flutuante**. Ele volta com a leitura automática desligada.
 
-## Treinar (modelos)
+## Enviar para treinamento (pelo artefato)
+
+Abra um artefato e toque em **Enviar para treinamento**:
+
+- **Treinar com a imagem**: abre a tela de treino já com o print do artefato (e o app certo).
+- **Treinar com o texto**: abre a lista dos textos lidos naquele artefato. Escolha a fonte (**texto da tela** ou **texto da foto**), toque em um texto e diga se é Valor, KM (único, coleta, entrega), Tempo (único, coleta, entrega) ou **Âncora**. Toque em **Conferir** para ver o que o app leu e o cálculo, depois **Salvar** e dê um nome. O botão **Salvos** lista e apaga modelos de texto.
+
+Se o app de corrida bloquear o print, o artefato guarda uma **tela preta** junto com os textos da tela, e você treina só pelo texto.
+
+## Treinar (modelos de imagem)
+
 
 Na tela principal, toque em **Treinar**.
 
 1. Escolha a imagem: da **galeria** ou dos **prints guardados no app** (Artefatos). Use um print da tela inteira com o card da corrida aparecendo. O ideal é usar um print feito pela câmera do botão flutuante, porque assim o modelo fica ligado ao app certo.
 2. Arraste um retângulo sobre um item da imagem. Aparece um flutuante para dizer o que ele é:
    - **Valor** (valor da rota)
-   - **KM**: único, ida ou volta
-   - **Tempo**: único, ida ou volta
-3. Use **único** quando o card já mostra o total somado. Se o app mostra ida e volta separados, marque os dois e o app soma.
+   - **KM**: único, coleta ou entrega
+   - **Tempo**: único, coleta ou entrega
+3. Use **único** quando o card já mostra o total somado. Se o app mostra coleta e entrega separadas, marque os dois e o app soma.
 4. O que você não marcar fica em branco.
 5. Tocar em uma marcação já feita reabre o flutuante, para trocar o tipo ou apagar só aquela.
 6. Toque no ✓ (embaixo, à direita). O app mostra o que leu em cada área e o cálculo. Se estiver certo, toque em **Salvar** e escolha o **nome do modelo**.
@@ -88,8 +103,8 @@ Detalhes:
 
 No ícone 💾 da tela de treino:
 
-- **Fazer backup**: salva um arquivo `.zip` com todos os modelos e suas imagens, no lugar que você escolher.
-- **Restaurar backup**: abre um `.zip` de backup e recupera os modelos e as imagens. Modelos com o mesmo nome são substituídos.
+- **Fazer backup**: salva um arquivo `.zip` com todos os modelos (de imagem e de texto) e as imagens, no lugar que você escolher.
+- **Restaurar backup**: abre um `.zip` de backup e recupera os modelos (de imagem e de texto) e as imagens. Modelos com o mesmo nome são substituídos.
 
 Assim, quando você validar um treino, não precisa retreinar o app depois de uma reinstalação.
 
@@ -105,7 +120,7 @@ Os dois são ligados pelo mesmo identificador e pelos números das caixas.
 Um artefato é criado quando:
 
 - você usa a **câmera** do botão flutuante (print real, para treinar). O app também tenta ler o print e registra o resultado: o que leu, ou **"Nenhum card de corrida encontrado"**. O card do app que estiver na tela sai no print;
-- você usa a **calculadora** e o app **não acha corrida**: o artefato diz "Nenhum card de corrida encontrado" e guarda o print e tudo que foi lido;
+- você usa a **calculadora** e o app **não acha corrida** (ou não há treino): o artefato guarda o print, os textos da foto e os **textos da tela**;
 - a opção **Guardar também as leituras certas** está ligada e a calculadora leu uma corrida (print + leitura, para conferir se o valor bate com a tela). Vem desligada.
 
 Ao abrir um artefato:
@@ -145,9 +160,11 @@ app/src/main/java/com/calculadora/entregas/
   AccessibilityReader.kt   serviço: leitura automática, calculadora e câmera
   OverlayUi.kt             botão flutuante, ícones, card e linha de leitura
   OcrReader.kt             OCR (texto e posição de cada palavra)
-  OfferParser.kt           leitura por texto (sem modelo)
+  OfferParser.kt           tipos da leitura
   OfferCalculator.kt       cálculo e formatação
-  Template.kt              modelos treinados, leitura por áreas, backup e restauração
+  Template.kt              modelos de imagem, leitura por áreas, backup e restauração
+  TextTemplate.kt          modelos de texto (formato + ordem + âncoras) e leitura por texto
+  TextTrainActivity.kt     tela de treino pelo texto
   TrainActivity.kt         tela de treino
   Artifacts.kt             armazenamento, imagem comentada e compartilhamento
   ArtifactsActivity.kt     lista e detalhe dos artefatos

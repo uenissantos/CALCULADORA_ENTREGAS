@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
@@ -47,6 +48,7 @@ class AccessibilityReader : AccessibilityService() {
     private var currentPkg: String? = null
     private var modelsVersion = -1
     private var modelsCache: List<Template> = emptyList()
+    private var textCache: List<TextModel> = emptyList()
 
     // Telas que nunca são corrida: menu/tela inicial do celular e barra do sistema.
     private val ignoredPackages: Set<String> by lazy {
@@ -67,17 +69,26 @@ class AccessibilityReader : AccessibilityService() {
         set
     }
 
-    private fun allModels(): List<Template> {
+    private fun reloadModels() {
         if (modelsVersion != TemplateStore.version) {
             modelsCache = TemplateStore.all(this)
+            textCache = TextStore.all(this)
             modelsVersion = TemplateStore.version
         }
-        return modelsCache
     }
 
-    // Modelos que valem para o app da tela: os ligados a ele e os sem app (imagem da galeria).
-    private fun modelsFor(pkg: String?): List<Template> =
-        allModels().filter { it.pkg == null || it.pkg == pkg }
+    // Modelos de imagem que valem para o app da tela: os ligados a ele e os sem app (imagem da galeria).
+    private fun modelsFor(pkg: String?): List<Template> {
+        reloadModels()
+        return modelsCache.filter { it.pkg == null || it.pkg == pkg }
+    }
+
+    // Modelos de texto que valem para o app da tela.
+    private fun textModelsFor(pkg: String?): List<TextModel> {
+        reloadModels()
+        return textCache.filter { it.pkg == null || it.pkg == pkg }
+    }
+
     private var scanPending = false
     private var lastScanAt = 0L
     private var rescan = false
@@ -184,9 +195,6 @@ class AccessibilityReader : AccessibilityService() {
         ui?.showCard(result, cfg.cardSeconds)
     }
 
-    private fun readingLineY(heightPx: Int): Int =
-        heightPx * AppConfig.load(this).linePercent / 100
-
     // O evento só agenda uma leitura: nada pesado roda aqui.
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !enabled) return
@@ -225,48 +233,86 @@ class AccessibilityReader : AccessibilityService() {
             return
         }
         currentPkg = pkg
-        if (modelsFor(pkg).isNotEmpty()) {
-            // Há modelo treinado para este app: a leitura é só pelo modelo (por foto).
+        val region = modelsFor(pkg)
+        val texts = textModelsFor(pkg)
+        if (region.isEmpty() && texts.isEmpty()) {
+            // Sem treino para este app: o app não gera card nenhum.
             root.recycle()
-            capture(MODE_AUTO)
+            if (lastOfferKey.isNotEmpty()) {
+                lastOfferKey = ""
+                ui?.hideCard()
+                ui?.hideLine()
+            }
             return
         }
         val items = ArrayList<OfferParser.TextItem>()
         collectItems(root, items, Rect())
         root.recycle()
-        if (items.isEmpty()) {
-            DebugLog.noItems++
-            return
+
+        // Precisa de print se houver modelo de imagem ou de texto da foto.
+        val needShot = region.isNotEmpty() || texts.any { it.src == TextSrc.OCR }
+        val accModels = texts.filter { it.src == TextSrc.ACC }
+        if (accModels.isNotEmpty()) {
+            val signature = items.joinToString("|") { "${it.text}@${it.top}" }
+            if (signature != lastSignature) {
+                lastSignature = signature
+                DebugLog.recordScreen(items, 0)
+                val hit = readByText(accModels, items)
+                if (hit != null) {
+                    publishOffer(hit.offer)
+                    return
+                }
+            } else if (!needShot) {
+                return
+            }
         }
-
-        val signature = items.joinToString("|") { "${it.text}@${it.top}" }
-        if (signature == lastSignature) return
-        lastSignature = signature
-
-        val rides = OfferParser.findRides(items)
-        DebugLog.recordScreen(items, rides.size)
-        if (rides.isNotEmpty()) {
-            handleRides(rides, readingLineY(resources.displayMetrics.heightPixels))
+        if (needShot) {
+            capture(MODE_AUTO, items)
         } else {
-            capture(MODE_AUTO)
+            // Treino de texto da tela e a corrida não está lá: some o card.
+            lastOfferKey = ""
+            ui?.hideCard()
+            ui?.hideLine()
         }
     }
 
+    // Textos da tela pela acessibilidade: cada nó visível com texto.
     private fun collectItems(node: AccessibilityNodeInfo?, out: MutableList<OfferParser.TextItem>, rect: Rect) {
         if (node == null) return
         if (!node.isVisibleToUser) return
-        val sb = StringBuilder()
-        node.text?.let { sb.append(it).append(' ') }
-        node.contentDescription?.let { sb.append(it) }
-        if (sb.isNotBlank()) {
+        val t = node.text?.toString()?.trim().orEmpty()
+        val d = node.contentDescription?.toString()?.trim().orEmpty()
+        val s = if (d.isEmpty() || d == t) t else if (t.isEmpty()) d else "$t $d"
+        if (s.isNotBlank()) {
             node.getBoundsInScreen(rect)
-            out.add(OfferParser.TextItem(sb.toString(), rect.top, rect.bottom))
+            out.add(OfferParser.TextItem(s, rect.top, rect.bottom))
         }
         for (i in 0 until node.childCount) {
             val child = node.getChild(i)
             collectItems(child, out, rect)
             child?.recycle()
         }
+    }
+
+    // Textos da tela agora (para os botões calculadora e câmera).
+    private fun snapshotItems(): List<OfferParser.TextItem> {
+        val root = rootInActiveWindow ?: return emptyList()
+        if (root.packageName?.toString() == packageName) {
+            root.recycle()
+            return emptyList()
+        }
+        val out = ArrayList<OfferParser.TextItem>()
+        collectItems(root, out, Rect())
+        root.recycle()
+        return out
+    }
+
+    private fun readByText(models: List<TextModel>, items: List<OfferParser.TextItem>): Trained? {
+        for (m in models) {
+            val o = TextReader.read(m, items).offer
+            if (o != null) return Trained("texto ${m.name}", o)
+        }
+        return null
     }
 
     // ---------- Foto da tela ----------
@@ -306,22 +352,30 @@ class AccessibilityReader : AccessibilityService() {
         return if (p == packageName) null else p
     }
 
-    private fun capture(mode: Int) {
+    private fun capture(mode: Int, autoItems: List<OfferParser.TextItem>? = null) {
         if (Build.VERSION.SDK_INT < 30) return
         if (!screenshotInProgress.compareAndSet(false, true)) {
             if (mode != MODE_AUTO) ui?.setHiddenForCapture(false)
             return
         }
         val pkg: String? = if (mode == MODE_AUTO) currentPkg else foregroundPackage()
+        val acc: List<OfferParser.TextItem> = if (mode == MODE_AUTO) (autoItems ?: emptyList()) else snapshotItems()
         // Se o nosso card está na tela, os textos dele não podem ser lidos como se fossem da corrida.
         val cardRect = ui?.cardBounds()
         grabScreen { bmp, err ->
             if (mode != MODE_AUTO) ui?.setHiddenForCapture(false)
             if (bmp == null) {
-                if (mode != MODE_AUTO) toast("Não consegui tirar o print (código $err)")
-                finishCapture()
+                if (mode == MODE_AUTO) {
+                    finishCapture()
+                } else {
+                    // App bloqueou o print: segue com tela preta e com os textos da tela.
+                    val dm = resources.displayMetrics
+                    val black = Bitmap.createBitmap(dm.widthPixels, dm.heightPixels, Bitmap.Config.ARGB_8888)
+                    black.eraseColor(Color.BLACK)
+                    processBitmap(black, mode, pkg, cardRect, acc, maxOf(err, 1))
+                }
             } else {
-                processBitmap(bmp, mode, pkg, cardRect)
+                processBitmap(bmp, mode, pkg, cardRect, acc, 0)
             }
         }
     }
@@ -358,95 +412,124 @@ class AccessibilityReader : AccessibilityService() {
     private fun overlapsCard(w: OcrWord, r: Rect): Boolean =
         r.contains((w.left + w.right) / 2, (w.top + w.bottom) / 2)
 
-    private fun processBitmap(bmp: Bitmap, mode: Int, pkg: String?, cardRect: Rect?) {
+    private fun processBitmap(bmp: Bitmap, mode: Int, pkg: String?, cardRect: Rect?, acc: List<OfferParser.TextItem>, blockedCode: Int) {
         val manual = mode != MODE_AUTO
         if (!manual && !screenChanged(bmp)) {
             bmp.recycle()
             finishCapture()
             return
         }
-        OcrReader.readFull(bmp) { res ->
-            try {
-                if (res == null) {
-                    if (manual) {
-                        toast("Falha ao ler o print. Guardado em Artefatos")
-                        ArtifactStore.save(this, bmp, ArtifactStore.KIND_NOT_FOUND, "Falha na leitura do texto (OCR)", null, null, pkg)
-                    }
-                } else {
-                    val words = if (cardRect == null) res.words else res.words.filterNot { overlapsCard(it, cardRect) }
-                    val lines = if (cardRect == null) res.lines else res.lines.filterNot {
-                        it.top >= cardRect.top - 6 && it.bottom <= cardRect.bottom + 6
-                    }
-                    val models = modelsFor(pkg)
-                    // Com modelo treinado para este app, só vale o modelo. Sem modelo, leitura por texto.
-                    val trained = if (models.isNotEmpty()) readByTemplate(models, words, bmp.width, bmp.height) else null
-                    val rides: List<OfferParser.ParsedOffer> = when {
-                        trained != null -> listOf(trained.offer)
-                        models.isNotEmpty() -> emptyList()
-                        else -> OfferParser.findRides(lines)
-                    }
-                    if (mode == MODE_CALC) {
-                        DebugLog.recordManual(lines, rides.size)
-                    } else if (mode == MODE_AUTO) {
-                        DebugLog.recordOcr(lines, rides.size)
-                    }
-                    val shot = mode == MODE_SHOT
-                    val y = readingLineY(bmp.height)
-                    if (rides.isNotEmpty()) {
-                        if (mode == MODE_CALC) lastOfferKey = ""
-                        if (!shot) handleRides(rides, y)
-                        if (shot || (mode == MODE_CALC && ArtifactStore.keepSuccess(this))) {
-                            val p = OfferParser.pick(rides, y)
-                            val source = if (trained != null) "modelo ${trained.name}" else "texto da tela"
-                            var status = if (p != null) {
-                                "Leu " + OfferCalculator.money(p.amount) + " | " + OfferCalculator.decimal(p.km) + " km | " + p.minutes.toInt() + " min (" + source + ")"
-                            } else {
-                                "Leu uma corrida ($source)"
-                            }
-                            if (shot) status = "Print real. $status"
-                            ArtifactStore.save(this, bmp, ArtifactStore.KIND_READ, status, res.words, modelReadings(models, words, bmp.width, bmp.height), pkg)
-                            if (shot) toast("Print guardado em Artefatos")
-                        }
-                    } else if (manual) {
-                        // Não achou card: o artefato diz isso claramente, com o que foi lido na tela.
-                        val why = if (models.isNotEmpty()) {
-                            "Nenhum card de corrida encontrado pelo modelo treinado"
-                        } else {
-                            "Nenhum card de corrida encontrado nesta tela"
-                        }
-                        ArtifactStore.save(
-                            this, bmp, ArtifactStore.KIND_NOT_FOUND,
-                            if (shot) "Print real. $why" else why,
-                            res.words, modelReadings(models, words, bmp.width, bmp.height), pkg
-                        )
-                        toast(if (shot) "Print guardado em Artefatos. $why" else "$why. Print e leitura guardados em Artefatos")
-                    } else {
-                        // A oferta saiu da tela: some o card e libera a mesma oferta para o futuro.
-                        lastOfferKey = ""
-                        ui?.hideCard()
-                        ui?.hideLine()
-                    }
+        if (blockedCode != 0) {
+            // Print bloqueado: não há o que ler na foto preta.
+            handleOcr(bmp, mode, pkg, cardRect, acc, OcrResult(emptyList(), emptyList()), blockedCode)
+            return
+        }
+        OcrReader.readFull(bmp) { res -> handleOcr(bmp, mode, pkg, cardRect, acc, res, 0) }
+    }
+
+    private fun handleOcr(bmp: Bitmap, mode: Int, pkg: String?, cardRect: Rect?, acc: List<OfferParser.TextItem>, res: OcrResult?, blockedCode: Int) {
+        val manual = mode != MODE_AUTO
+        try {
+            if (res == null) {
+                if (manual) {
+                    toast("Falha ao ler o print. Guardado em Artefatos")
+                    ArtifactStore.save(this, bmp, ArtifactStore.KIND_NOT_FOUND, "Falha na leitura do texto (OCR)", null, null, pkg, acc)
                 }
-            } finally {
-                bmp.recycle()
-                finishCapture()
+                return
             }
+            val words = if (cardRect == null) res.words else res.words.filterNot { overlapsCard(it, cardRect) }
+            val lines = if (cardRect == null) res.lines else res.lines.filterNot {
+                it.top >= cardRect.top - 6 && it.bottom <= cardRect.bottom + 6
+            }
+            val region = modelsFor(pkg)
+            val texts = textModelsFor(pkg)
+            // Só o que foi treinado vale: texto da tela, texto da foto e áreas da imagem.
+            val trained = readTrained(region, texts, acc, words, lines, bmp.width, bmp.height)
+            if (mode == MODE_CALC) {
+                DebugLog.recordManual(lines, if (trained != null) 1 else 0)
+            } else if (mode == MODE_AUTO) {
+                DebugLog.recordOcr(lines, if (trained != null) 1 else 0)
+            }
+            val shot = mode == MODE_SHOT
+            val prefix = (if (blockedCode != 0) "App bloqueou o print (código $blockedCode): tela preta, só os textos da tela. " else "") +
+                (if (shot) "Print real. " else "")
+            if (trained != null) {
+                if (mode == MODE_CALC) lastOfferKey = ""
+                if (!shot) publishOffer(trained.offer)
+                if (shot || (mode == MODE_CALC && ArtifactStore.keepSuccess(this))) {
+                    val p = trained.offer
+                    val status = prefix + "Leu " + OfferCalculator.money(p.amount) + " | " +
+                        OfferCalculator.decimal(p.km) + " km | " + p.minutes.toInt() + " min (" + trained.name + ")"
+                    ArtifactStore.save(this, bmp, ArtifactStore.KIND_READ, status, res.words, modelReadings(region, texts, acc, words, lines, bmp.width, bmp.height), pkg, acc)
+                    if (shot) toast("Print guardado em Artefatos")
+                }
+            } else if (manual) {
+                // Não achou card: o artefato diz isso claramente, com tudo que foi lido na tela.
+                val why = if (region.isEmpty() && texts.isEmpty()) {
+                    "Sem treino para este app. Nenhum card gerado"
+                } else {
+                    "Nenhum card de corrida encontrado pelo treino"
+                }
+                ArtifactStore.save(
+                    this, bmp, ArtifactStore.KIND_NOT_FOUND, prefix + why,
+                    res.words, modelReadings(region, texts, acc, words, lines, bmp.width, bmp.height), pkg, acc
+                )
+                toast(if (shot) "Print guardado em Artefatos. $why" else "$why. Print e leitura guardados em Artefatos")
+            } else {
+                // A oferta saiu da tela: some o card e libera a mesma oferta para o futuro.
+                lastOfferKey = ""
+                ui?.hideCard()
+                ui?.hideLine()
+            }
+        } finally {
+            bmp.recycle()
+            finishCapture()
         }
     }
 
-    // Tenta cada modelo do app; o primeiro que ler valor e KM válidos vale.
-    private fun readByTemplate(models: List<Template>, words: List<OcrWord>, w: Int, h: Int): Trained? {
-        for (t in models) {
-            val offer = TemplateReader.read(t, words, w, h).offer
-            if (offer != null) return Trained(t.name, offer)
+    // Ordem: texto da tela, texto da foto, áreas da imagem. O primeiro que ler valor e KM válidos vale.
+    private fun readTrained(
+        region: List<Template>,
+        texts: List<TextModel>,
+        acc: List<OfferParser.TextItem>,
+        words: List<OcrWord>,
+        lines: List<OfferParser.TextItem>,
+        w: Int,
+        h: Int
+    ): Trained? {
+        for (m in texts) {
+            val o = TextReader.read(m, if (m.src == TextSrc.ACC) acc else lines).offer
+            if (o != null) return Trained("texto ${m.name}", o)
+        }
+        for (t in region) {
+            val o = TemplateReader.read(t, words, w, h).offer
+            if (o != null) return Trained("modelo ${t.name}", o)
         }
         return null
     }
 
     // O que cada modelo leu e onde procurou, para comparar com o print depois.
-    private fun modelReadings(models: List<Template>, words: List<OcrWord>, w: Int, h: Int): JSONArray {
+    private fun modelReadings(
+        region: List<Template>,
+        texts: List<TextModel>,
+        acc: List<OfferParser.TextItem>,
+        words: List<OcrWord>,
+        lines: List<OfferParser.TextItem>,
+        w: Int,
+        h: Int
+    ): JSONArray {
         val arr = JSONArray()
-        for (t in models) {
+        for (m in texts) {
+            val r = TextReader.read(m, if (m.src == TextSrc.ACC) acc else lines)
+            val o = JSONObject()
+            o.put("nome", m.name + " (" + TextSrc.label(m.src) + ")")
+            o.put("ok", r.offer != null)
+            val campos = JSONObject()
+            for ((f, text) in r.raw) campos.put(f.label, text)
+            o.put("campos", campos)
+            arr.put(o)
+        }
+        for (t in region) {
             val r = TemplateReader.read(t, words, w, h)
             val o = JSONObject()
             o.put("nome", t.name)
@@ -473,21 +556,14 @@ class AccessibilityReader : AccessibilityService() {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
-    private fun handleRides(rides: List<OfferParser.ParsedOffer>, readingY: Int) {
-        val listMode = rides.distinctBy { "${it.amount}|${it.km}|${it.minutes}" }.size > 1
-        val ride = OfferParser.pick(rides, readingY) ?: return
-        if (listMode) ui?.showLine(readingY) else ui?.hideLine()
-        publishOffer(ride, listMode)
-    }
-
-    private fun publishOffer(offer: OfferParser.ParsedOffer, persist: Boolean) {
+    private fun publishOffer(offer: OfferParser.ParsedOffer) {
         val key = "${offer.amount}|${offer.km}|${offer.minutes}"
+        // Mesma corrida lida de novo (ou de outra fonte): não pisca outro card.
         if (key == lastOfferKey) return
         val cfg = AppConfig.load(this)
         val result = OfferCalculator.calculate(offer.amount, offer.km, offer.minutes, cfg) ?: return
         lastOfferKey = key
-        // Na lista de corridas o card fica fixo e acompanha a corrida da linha de leitura.
-        ui?.showCard(result, if (persist) 0 else cfg.cardSeconds)
+        ui?.showCard(result, cfg.cardSeconds)
     }
 
     override fun onInterrupt() = Unit
